@@ -1,0 +1,68 @@
+import Link from "next/link";
+import {
+  Building2, SlidersHorizontal, CreditCard, Smartphone, Database,
+  Trash2, Webhook, ShieldCheck, Globe2, ChevronRight, type LucideIcon,
+} from "lucide-react";
+import { requirePageUser } from "@/lib/core/page-guards";
+import { can, type Permission } from "@/lib/core/permissions";
+import { Card } from "@/components/ui/card";
+
+export const dynamic = "force-dynamic";
+
+interface SettingItem {
+  label: string;
+  description: string;
+  href: string;
+  icon: LucideIcon;
+  permission?: Permission;
+}
+
+const ITEMS: SettingItem[] = [
+  { label: "School profile", description: "Name, motto, vision, logo, colours, contacts & joining requirements.", href: "/settings/school", icon: Building2, permission: "tenant.manage_settings" },
+  { label: "Public website", description: "Hero, news, gallery, leaders, testimonials, activities, SEO and map.", href: "/settings/public-site", icon: Globe2, permission: "tenant.manage_settings" },
+  { label: "Modules", description: "Turn features on or off for your school.", href: "/settings/modules", icon: SlidersHorizontal, permission: "tenant.manage_modules" },
+  { label: "Billing", description: "Your NEYO subscription, plan and invoices.", href: "/settings/billing", icon: CreditCard },
+  { label: "Payments", description: "M-Pesa / Daraja credentials for collecting fees.", href: "/settings/payments", icon: Smartphone, permission: "tenant.manage_settings" },
+  { label: "Data", description: "Export all of your school's data.", href: "/settings/data", icon: Database, permission: "tenant.export_data" },
+  { label: "Recycle Bin", description: "Restore or permanently remove deleted records.", href: "/settings/recycle-bin", icon: Trash2, permission: "tenant.manage_settings" },
+  { label: "Developer", description: "API keys and webhooks for integrations.", href: "/settings/developer", icon: Webhook, permission: "api.manage" },
+  { label: "Security", description: "Your password, 2FA, passkeys and sessions.", href: "/settings/security", icon: ShieldCheck },
+];
+
+/** Settings hub (G.9) — the index page that links every settings area. */
+export default async function SettingsHubPage() {
+  const user = await requirePageUser();
+  const items = ITEMS.filter((i) => !i.permission || can(user.role, i.permission));
+
+  return (
+    <div className="w-full space-y-8">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight text-navy-900 dark:text-navy-50">
+          Settings
+        </h1>
+        <p className="mt-1 text-sm text-navy-500 dark:text-navy-400">
+          Manage your school, its branding, billing and access.
+        </p>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        {items.map((it) => (
+          <Link key={it.href} href={it.href}>
+            <Card className="group flex h-full items-start gap-3 p-4 transition-shadow duration-200 ease-apple hover:shadow-card-hover">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-navy-50 text-navy-500 dark:bg-navy-800 dark:text-navy-300">
+                <it.icon className="h-5 w-5" strokeWidth={1.75} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium text-navy-900 dark:text-navy-50">{it.label}</span>
+                  <ChevronRight className="h-4 w-4 text-navy-300 transition-transform duration-200 ease-apple group-hover:translate-x-0.5" />
+                </div>
+                <p className="mt-0.5 text-sm text-navy-500 dark:text-navy-400">{it.description}</p>
+              </div>
+            </Card>
+          </Link>
+        ))}
+      </div>
+    </div>
+  );
+}
