@@ -99,6 +99,14 @@ export async function upsertProfile(user: SessionUser, input: { userId: string; 
 /** B.9.6 staff promotion = role change with audit trail. */
 export async function promoteStaff(user: SessionUser, targetUserId: string, newRole: string, note?: string) {
   return withTenant(user.tenantId, async () => {
+    const allowedRoles = ["PRINCIPAL", "SCHOOL_OWNER", "SUPER_ADMIN"];
+    const hasPrimary = allowedRoles.includes(user.role);
+    const hasSecondary = user.secondaryRole ? allowedRoles.includes(user.secondaryRole) : false;
+    
+    if (!hasPrimary && !hasSecondary) {
+      throw new HrError("FORBIDDEN", "Only the Principal or School Owner has the authority to promote staff or appoint HODs.");
+    }
+
     const target = await tenantDb().user.findUnique({ where: { id: targetUserId } });
     if (!target) throw new HrError("NOT_FOUND", "Staff member not found.");
     if (["PARENT", "STUDENT", "SUPER_ADMIN"].includes(newRole)) throw new HrError("INVALID", "Invalid staff role.");

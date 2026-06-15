@@ -555,6 +555,21 @@ export async function transferStudent(user: SessionUser, studentId: string, inpu
     if (student.status === "TRANSFERRED")
       throw new StudentError("DUPLICATE", "This student has already been transferred out.");
 
+    // Library Clearance Transfer Guard (H.3)
+    const activeIssues = await tenantDb().bookIssue.count({
+      where: { studentId, returnedAt: null },
+    });
+    if (activeIssues > 0) {
+      throw new StudentError("FORBIDDEN", `Student cannot be transferred out. They currently hold ${activeIssues} un-returned library book(s). Please clear their library ledger first!`);
+    }
+
+    const unpaidFinesCount = await tenantDb().bookIssue.count({
+      where: { studentId, returnedAt: { not: null }, fineKes: { gt: 0 }, finePaid: false },
+    });
+    if (unpaidFinesCount > 0) {
+      throw new StudentError("FORBIDDEN", `Student cannot be transferred out. They have unpaid library fines. Please clear their library ledger first!`);
+    }
+
     const reason = input.reasonNote ? `${input.reason}: ${input.reasonNote}` : input.reason;
     const transfer = await tenantDb().studentTransfer.create({
       data: {
@@ -572,6 +587,13 @@ export async function transferStudent(user: SessionUser, studentId: string, inpu
       where: { id: studentId },
       data: { status: "TRANSFERRED", classId: null }, // seat freed
     });
+    
+    // Automatically release their hostel bed space if they are a boarder! (H.3)
+    await tenantDb().hostelAllocation.updateMany({
+      where: { studentId, releasedAt: null },
+      data: { releasedAt: new Date() },
+    });
+
     await db.auditLog.create({
       data: {
         tenantId: user.tenantId,
@@ -717,5 +739,95 @@ export async function studentStats(user: SessionUser) {
       tenantDb().schoolClass.count({ where: { archived: false } }),
     ]);
     return { total, active, classes };
+  });
+}
+
+/** Record/save a student's leaving certificate in the school vault (H.3) */
+export async function recordLeavingCertificate(
+  user: SessionUser,
+  input: { studentId: string; certificateType: string; certificateNo: string; hardcopyLocation: string; fileUrl?: string; fileName?: string }
+) {
+  return withTenant(user.tenantId, async () => {
+    const existing = await tenantDb().leavingCertificate.findFirst({
+      where: { certificateNo: input.certificateNo, NOT: { studentId: input.studentId } },
+    });
+    if (existing) {
+      throw new StudentError("DUPLICATE", `Certificate number "${input.certificateNo}" is already logged in NEYO for another student!`);
+    }
+
+    const row = await db.leavingCertificate.upsert({
+      where: { studentId: input.studentId },
+      create: {
+        tenantId: user.tenantId,
+        studentId: input.studentId,
+        certificateType: input.certificateType,
+        certificateNo: input.certificateNo,
+        hardcopyLocation: input.hardcopyLocation,
+        fileUrl: input.fileUrl || null,
+        fileName: input.fileName || null,
+        status: "STORED",
+      },
+      update: {
+        certificateType: input.certificateType,
+        certificateNo: input.certificateNo,
+        hardcopyLocation: input.hardcopyLocation,
+        fileUrl: input.fileUrl || null,
+        fileName: input.fileName || null,
+      },
+    });
+
+    await db.auditLog.create({
+      data: {
+        tenantId: user.tenantId, actorId: user.id, actorName: user.fullName,
+        action: "student.certificate_vaulted", entityType: "leavingCertificate", entityId: row.id,
+        metadata: JSON.stringify({ type: input.certificateType, no: input.certificateNo }),
+      },
+    });
+
+    return row;
+  });
+}
+
+/** Log the physical handover of a certificate to a student/parent with proof (H.3) */
+export async function handOverLeavingCertificate(
+  user: SessionUser,
+  input: { studentId: string; handedOverTo: string }
+) {
+  return withTenant(user.tenantId, async () => {
+    const cert = await tenantDb().leavingCertificate.findUnique({
+      where: { studentId: input.studentId },
+    });
+    if (!cert) throw new StudentError("NOT_FOUND", "No certificate record found in the vault.");
+    if (cert.status === "HANDED_OVER") {
+      throw new StudentError("FORBIDDEN", "This certificate has already been handed over!");
+    }
+
+    const row = await tenantDb().leavingCertificate.update({
+      where: { studentId: input.studentId },
+      data: {
+        status: "HANDED_OVER",
+        handedOverTo: input.handedOverTo,
+        handedOverAt: new Date(),
+        handedOverById: user.id,
+        handedOverByName: user.fullName,
+      },
+    });
+
+    await db.auditLog.create({
+      data: {
+        tenantId: user.tenantId, actorId: user.id, actorName: user.fullName,
+        action: "student.certificate_handed_over", entityType: "leavingCertificate", entityId: row.id,
+        metadata: JSON.stringify({ recipient: input.handedOverTo, by: user.fullName }),
+      },
+    });
+
+    return row;
+  });
+}
+
+/** Get a student's leaving certificate record */
+export async function getLeavingCertificate(user: SessionUser, studentId: string) {
+  return withTenant(user.tenantId, async () => {
+    return tenantDb().leavingCertificate.findUnique({ where: { studentId } });
   });
 }

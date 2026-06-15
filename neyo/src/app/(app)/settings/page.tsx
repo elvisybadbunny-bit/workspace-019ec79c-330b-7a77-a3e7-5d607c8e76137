@@ -32,7 +32,23 @@ const ITEMS: SettingItem[] = [
 /** Settings hub (G.9) — the index page that links every settings area. */
 export default async function SettingsHubPage() {
   const user = await requirePageUser();
-  const items = ITEMS.filter((i) => !i.permission || can(user.role, i.permission));
+
+  // Non-concerned roles should NOT see administrative or school configurations.
+  // They only get to see Security (passwords, language, 2FA).
+  const nonConcernedRoles = ["TEACHER", "CLASS_TEACHER", "LIBRARIAN", "HOSTEL_MASTER", "SUPPORT_STAFF", "PARENT", "STUDENT"];
+  const isNonConcerned = nonConcernedRoles.includes(user.role) && (!user.secondaryRole || nonConcernedRoles.includes(user.secondaryRole));
+
+  let items = ITEMS.filter((i) => {
+    if (!i.permission) return true;
+    const hasPrimary = can(user.role, i.permission);
+    const hasSecondary = user.secondaryRole ? can(user.secondaryRole, i.permission) : false;
+    return hasPrimary || hasSecondary;
+  });
+
+  if (isNonConcerned) {
+    // Forcefully strip out everything except their personal security credentials panel
+    items = items.filter((i) => i.href === "/settings/security");
+  }
 
   return (
     <div className="w-full space-y-8">
@@ -45,24 +61,30 @@ export default async function SettingsHubPage() {
         </p>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        {items.map((it) => (
-          <Link key={it.href} href={it.href}>
-            <Card className="group flex h-full items-start gap-3 p-4 transition-shadow duration-200 ease-apple hover:shadow-card-hover">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-navy-50 text-navy-500 dark:bg-navy-800 dark:text-navy-300">
-                <it.icon className="h-5 w-5" strokeWidth={1.75} />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center justify-between">
-                  <span className="font-medium text-navy-900 dark:text-navy-50">{it.label}</span>
-                  <ChevronRight className="h-4 w-4 text-navy-300 transition-transform duration-200 ease-apple group-hover:translate-x-0.5" />
+      {items.length === 0 ? (
+        <Card className="p-6 text-center text-sm text-navy-500 dark:text-navy-400">
+          No settings configurations are available for your current role.
+        </Card>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2">
+          {items.map((it) => (
+            <Link key={it.href} href={it.href}>
+              <Card className="group flex h-full items-start gap-3 p-4 transition-all duration-300 ease-apple hover:shadow-card-hover">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-navy-50 text-navy-500 dark:bg-navy-800 dark:text-navy-300">
+                  <it.icon className="h-5 w-5" strokeWidth={1.75} />
                 </div>
-                <p className="mt-0.5 text-sm text-navy-500 dark:text-navy-400">{it.description}</p>
-              </div>
-            </Card>
-          </Link>
-        ))}
-      </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium text-navy-900 dark:text-navy-50">{it.label}</span>
+                    <ChevronRight className="h-4 w-4 text-navy-300 transition-transform duration-200 ease-apple group-hover:translate-x-0.5" />
+                  </div>
+                  <p className="mt-0.5 text-sm text-navy-500 dark:text-navy-400">{it.description}</p>
+                </div>
+              </Card>
+            </Link>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

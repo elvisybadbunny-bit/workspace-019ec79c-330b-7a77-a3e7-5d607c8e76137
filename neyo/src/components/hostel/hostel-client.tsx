@@ -191,6 +191,7 @@ function RoomBoard({ hostel, canManage, onBack }: { hostel: HostelRow; canManage
   const [students, setStudents] = React.useState<StudentOpt[]>([]);
   const [allocating, setAllocating] = React.useState<{ roomId: string; roomName: string; bedNo: number } | null>(null);
   const [addingRoom, setAddingRoom] = React.useState(false);
+  const [autoAllocOpen, setAutoAllocOpen] = React.useState(false);
 
   const load = React.useCallback(async () => {
     const res = await fetch(`/api/hostel?board=${hostel.id}`);
@@ -224,7 +225,14 @@ function RoomBoard({ hostel, canManage, onBack }: { hostel: HostelRow; canManage
         <button onClick={onBack} className="inline-flex items-center gap-1 text-sm font-medium text-navy-500 hover:text-navy-900 dark:text-navy-400">
           <ArrowLeft className="h-4 w-4" /> Hostels
         </button>
-        {canManage && <Button size="sm" onClick={() => setAddingRoom(true)}><Plus className="h-3.5 w-3.5" /> Add room</Button>}
+        {canManage && (
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="secondary" onClick={() => setAutoAllocOpen(true)}>
+              <MoonStar className="h-3.5 w-3.5 text-green-600" /> Auto-Allocate Beds
+            </Button>
+            <Button size="sm" onClick={() => setAddingRoom(true)}><Plus className="h-3.5 w-3.5" /> Add room</Button>
+          </div>
+        )}
       </div>
       <h2 className="text-lg font-semibold text-navy-900 dark:text-navy-50">{board.hostel.name} <span className="text-sm font-normal text-navy-400">· {GENDER_LABEL[board.hostel.gender]}</span></h2>
 
@@ -273,6 +281,13 @@ function RoomBoard({ hostel, canManage, onBack }: { hostel: HostelRow; canManage
         />
       )}
       {addingRoom && <AddRoomDialog hostelId={hostel.id} onClose={() => setAddingRoom(false)} onDone={() => { setAddingRoom(false); load(); }} />}
+      {autoAllocOpen && (
+        <AutoAllocateDormDialog
+          hostelId={hostel.id}
+          onClose={() => setAutoAllocOpen(false)}
+          onDone={(msg) => { setAutoAllocOpen(false); toast({ title: msg, tone: "success" }); load(); }}
+        />
+      )}
     </div>
   );
 }
@@ -357,6 +372,95 @@ function AddRoomDialog({ hostelId, onClose, onDone }: { hostelId: string; onClos
           <div><Label>Beds</Label><Input type="number" min={1} value={capacity} onChange={(e) => setCapacity(e.target.value)} /></div>
           <Button onClick={save} disabled={saving || !name.trim()} className="w-full">
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Add room
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- Auto-Allocate Dorm Placement Engine Modal (Chunk D — Part 1) ------------------
+function AutoAllocateDormDialog({ hostelId, onClose, onDone }: { hostelId: string; onClose: () => void; onDone: (msg: string) => void }) {
+  const { toast } = useToast();
+  const [strategy, setStrategy] = React.useState<"FORM" | "MIXED">("FORM");
+  const [saving, setSaving] = React.useState(false);
+
+  async function run() {
+    setSaving(true);
+    try {
+      const res = await fetch("/api/hostel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "autoAllocate", hostelId, strategy }),
+      });
+      const json = await res.json();
+      if (json.ok) {
+        onDone(
+          `Successfully allocated ${json.data.allocatedCount} beds! ${
+            json.data.totalUnallocatedLeft > 0 
+              ? `${json.data.totalUnallocatedLeft} boarders left unassigned.` 
+              : "All boarders assigned!"
+          }`
+        );
+      } else {
+        toast({ title: json.error?.message || "Allocation failed.", tone: "error" });
+      }
+    } catch {
+      toast({ title: "Failed to connect to allocation engine.", tone: "error" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-navy-950/40 p-4 backdrop-blur-sm sm:items-center" onClick={onClose}>
+      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-pop dark:bg-navy-900 border border-navy-100 dark:border-navy-800" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-4 flex items-start justify-between">
+          <div className="space-y-0.5">
+            <h3 className="text-base font-bold text-navy-900 dark:text-navy-50">Auto-Allocate Beds</h3>
+            <p className="text-xs text-navy-400">Run the automatic dorm placement solver for this hostel.</p>
+          </div>
+          <button onClick={onClose} className="rounded-full p-1 text-navy-400 hover:bg-navy-50 dark:hover:bg-navy-800" aria-label="Close"><X className="h-4 w-4" /></button>
+        </div>
+
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-dashed border-green-200/50 bg-green-500/5 p-4 text-xs">
+            <p className="font-bold text-green-700 dark:text-green-300">Intelligent Safety Rules Enabled:</p>
+            <p className="mt-1 text-navy-500 dark:text-navy-400">① Checks and strictly blocks Day Scholars (DAY boardingType) from allocation.</p>
+            <p className="text-navy-500 dark:text-navy-400">② Validates student gender against the hostel's allowed gender (Boys / Girls).</p>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Placement Strategy</Label>
+            <div className="grid grid-cols-2 gap-2.5">
+              <button
+                onClick={() => setStrategy("FORM")}
+                className={`rounded-2xl border p-4 text-left transition-all duration-200 ease-apple ${
+                  strategy === "FORM"
+                    ? "border-green-500 bg-green-500/10 text-green-700 dark:text-green-300"
+                    : "border-navy-100 hover:bg-navy-50 dark:border-navy-800 dark:bg-navy-950"
+                }`}
+              >
+                <p className="font-bold text-sm">Form-Based</p>
+                <p className="text-[10px] text-navy-400 mt-0.5">Group same-level classes together (sleep with peers).</p>
+              </button>
+
+              <button
+                onClick={() => setStrategy("MIXED")}
+                className={`rounded-2xl border p-4 text-left transition-all duration-200 ease-apple ${
+                  strategy === "MIXED"
+                    ? "border-green-500 bg-green-500/10 text-green-700 dark:text-green-300"
+                    : "border-navy-100 hover:bg-navy-50 dark:border-navy-800 dark:bg-navy-950"
+                }`}
+              >
+                <p className="font-bold text-sm">Mixed Levels</p>
+                <p className="text-[10px] text-navy-400 mt-0.5">Distribute sequentially (mentorship/mix streams).</p>
+              </button>
+            </div>
+          </div>
+
+          <Button onClick={run} disabled={saving} className="w-full">
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <BedDouble className="h-4 w-4" />} Run Placement Solver
           </Button>
         </div>
       </div>

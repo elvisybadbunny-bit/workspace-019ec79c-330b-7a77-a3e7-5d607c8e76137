@@ -15,6 +15,8 @@ export const incidentSchema = z.object({
   severity: z.enum(["MINOR", "MAJOR", "SEVERE"]),
   description: z.string().trim().min(5, "Describe what happened.").max(2000),
   actionTaken: z.string().trim().max(300).optional(),
+  proofFileUrl: z.string().trim().max(500).optional(),
+  proofFileName: z.string().trim().max(200).optional(),
 });
 export type IncidentInput = z.infer<typeof incidentSchema>;
 

@@ -39,6 +39,33 @@ export function GateClient({ canManage, canPanic }: { canManage: boolean; canPan
   const [checkNo, setCheckNo] = React.useState("");
   const [pickupQ, setPickupQ] = React.useState("");
   const [pickupResults, setPickupResults] = React.useState<PickupResult[] | null>(null);
+  const [verifyingPickupId, setVerifyingPickupId] = React.useState<string | null>(null);
+
+  async function confirmPickup(studentId: string, personId: string) {
+    setVerifyingPickupId(personId);
+    try {
+      const res = await fetch("/api/security", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "confirmPickup", studentId, personId }),
+      });
+      const json = await res.json();
+      if (json.ok) {
+        toast({
+          title: "Pickup Confirmed!",
+          description: "Parent notified via instant automated SMS confirmation.",
+          tone: "success",
+        });
+        setPickupQ("");
+        setPickupResults(null);
+        load();
+      } else {
+        toast({ title: json.error?.message || "Failed to authorize.", tone: "error" });
+      }
+    } finally {
+      setVerifyingPickupId(null);
+    }
+  }
 
   const load = React.useCallback(async () => {
     setError(false);
@@ -204,7 +231,23 @@ export function GateClient({ canManage, canPanic }: { canManage: boolean; canPan
                               <p className="font-medium text-navy-900 dark:text-navy-50">{p.fullName} <span className="text-xs text-navy-400">({p.relationship})</span></p>
                               <p className="text-xs text-navy-400">{p.phone}{p.nationalId ? ` · ID ${p.nationalId} — check it` : ""}</p>
                             </div>
-                            <Badge tone="green">authorised ✓</Badge>
+                            <div className="flex items-center gap-2">
+                              <Badge tone="green">authorised ✓</Badge>
+                              {canManage && (
+                                <Button 
+                                  size="sm" 
+                                  onClick={() => confirmPickup(r.studentId, p.id)}
+                                  disabled={verifyingPickupId === p.id}
+                                  className="shadow-sm"
+                                >
+                                  {verifyingPickupId === p.id ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    "Verify & Authorize Exit"
+                                  )}
+                                </Button>
+                              )}
+                            </div>
                           </li>
                         ))}
                       </ul>

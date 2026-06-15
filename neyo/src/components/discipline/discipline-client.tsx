@@ -10,7 +10,7 @@
 import * as React from "react";
 import {
   ShieldAlert, X, Loader2, AlertCircle, Plus, Gauge, UserX, HeartHandshake,
-  CheckCircle2, Lock,
+  CheckCircle2, Lock, FileText, Camera, Download,
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -20,8 +20,9 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useToast } from "@/components/ui/toast";
+import { FileUpload, type UploadedFile } from "@/components/ui/file-upload";
 
-interface Incident { id: string; studentName: string; admissionNo: string; date: string; category: string; severity: string; points: number; description: string; actionTaken: string | null; reportedByName: string; parentNotifiedAt: string | null }
+interface Incident { id: string; studentName: string; admissionNo: string; date: string; category: string; severity: string; points: number; description: string; actionTaken: string | null; reportedByName: string; parentNotifiedAt: string | null; proofFileUrl?: string | null; proofFileName?: string | null }
 interface Suspension { id: string; studentName: string; admissionNo: string; startDate: string; endDate: string; reason: string; conditions: string | null; status: string; effective: boolean; parentNotifiedAt: string | null }
 interface BoardRow { studentId: string; studentName: string; admissionNo: string; points: number; incidents: number; lastDate: string; status: string }
 interface Note { id: string; studentName: string; date: string; sessionType: string; note: string; followUpOn: string | null; counselorName: string }
@@ -76,6 +77,16 @@ export function DisciplineClient({ canManage, canConfidential }: { canManage: bo
     else toast({ title: json.error?.message || "Failed", tone: "error" });
   }
 
+  async function approveProposedSuspension(id: string, name: string) {
+    const res = await fetch("/api/discipline", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "approveSuspension", suspensionId: id }),
+    });
+    const json = await res.json();
+    if (json.ok) { toast({ title: `${name}'s suspension approved & parent notified ✓`, tone: "success" }); load(); }
+    else toast({ title: json.error?.message || "Failed to approve", tone: "error" });
+  }
+
   if (error) return <LoadError onRetry={load} />;
   if (data === null) return <div className="space-y-3"><Skeleton className="h-24 rounded-2xl" /><Skeleton className="h-48 rounded-2xl" /></div>;
 
@@ -124,6 +135,20 @@ export function DisciplineClient({ canManage, canConfidential }: { canManage: bo
                     <p className="text-xs text-navy-400">{i.date} · {i.category.toLowerCase()} · reported by {i.reportedByName}</p>
                     <p className="text-sm text-navy-700 dark:text-navy-200">{i.description}</p>
                     {i.actionTaken && <p className="text-xs text-navy-500 dark:text-navy-400">Action: {i.actionTaken}</p>}
+                    
+                    {/* View Photo Evidence / Camera upload link (H.3) */}
+                    {i.proofFileUrl && (
+                      <div className="pt-2">
+                        <a 
+                          href={i.proofFileUrl} 
+                          download={i.proofFileName ?? undefined} 
+                          className="inline-flex items-center gap-1 text-xs font-bold text-green-700 hover:underline dark:text-green-400"
+                        >
+                          <FileText className="h-3.5 w-3.5" />
+                          View Incident Proof ({i.proofFileName || "Attachment"})
+                        </a>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               ))}
@@ -172,9 +197,14 @@ export function DisciplineClient({ canManage, canConfidential }: { canManage: bo
                     </div>
                     <div className="flex items-center gap-2">
                       {s.parentNotifiedAt && <Badge tone="blue">parent SMS ✓</Badge>}
-                      <Badge tone={s.effective ? "red" : s.status === "ACTIVE" ? "amber" : "green"}>
-                        {s.effective ? "suspended now" : s.status.toLowerCase()}
+                      <Badge tone={s.status === "PENDING" ? "amber" : s.effective ? "red" : s.status === "ACTIVE" ? "amber" : "green"}>
+                        {s.status === "PENDING" ? "pending approval" : s.effective ? "suspended now" : s.status.toLowerCase()}
                       </Badge>
+                      {canConfidential && s.status === "PENDING" && (
+                        <Button size="sm" onClick={() => approveProposedSuspension(s.id, s.studentName.split(" ")[0])}>
+                          <CheckCircle2 className="h-3.5 w-3.5" /> Approve
+                        </Button>
+                      )}
                       {canConfidential && s.status === "ACTIVE" && (
                         <Button size="sm" variant="secondary" onClick={() => closeSuspension(s.id, s.studentName.split(" ")[0])}>
                           <CheckCircle2 className="h-3.5 w-3.5" /> Close
@@ -261,6 +291,7 @@ function StudentSelect({ students, value, onChange }: { students: StudentOpt[]; 
 function IncidentDialog({ students, onClose, onDone }: { students: StudentOpt[]; onClose: () => void; onDone: () => void }) {
   const { toast } = useToast();
   const [f, setF] = React.useState({ studentId: "", date: today(), category: "LATENESS", severity: "MINOR", description: "", actionTaken: "" });
+  const [file, setFile] = React.useState<UploadedFile | null>(null);
   const [saving, setSaving] = React.useState(false);
   const set = (k: string, v: string) => setF((p) => ({ ...p, [k]: v }));
 
@@ -269,7 +300,13 @@ function IncidentDialog({ students, onClose, onDone }: { students: StudentOpt[];
     try {
       const res = await fetch("/api/discipline", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "incident", ...f, actionTaken: f.actionTaken || undefined }),
+        body: JSON.stringify({ 
+          action: "incident", 
+          ...f, 
+          actionTaken: f.actionTaken || undefined,
+          proofFileUrl: file?.url || undefined,
+          proofFileName: file?.fileName || undefined,
+        }),
       });
       const json = await res.json();
       if (json.ok) {
@@ -316,6 +353,23 @@ function IncidentDialog({ students, onClose, onDone }: { students: StudentOpt[];
           <textarea value={f.description} onChange={(e) => set("description", e.target.value)} rows={3} className="w-full rounded-2xl border border-navy-200 bg-white px-3.5 py-2.5 text-sm dark:border-navy-700 dark:bg-navy-900" />
         </div>
         <div><Label>Action taken (optional)</Label><Input value={f.actionTaken} onChange={(e) => set("actionTaken", e.target.value)} placeholder="e.g. Warned; referred to deputy" /></div>
+        
+        {/* Photo Proof / Camera Upload Section (H.3) */}
+        <div>
+          <Label>Attach Photo Proof / Evidence (Optional)</Label>
+          {file ? (
+            <p className="flex items-center gap-2 rounded-xl bg-warm-50 px-3 py-2 text-xs text-navy-600 dark:bg-navy-800 dark:text-navy-300 mt-1">
+              <FileText className="h-3.5 w-3.5 text-green-600" /> {file.fileName}
+              <button onClick={() => setFile(null)} className="ml-auto text-navy-400 hover:text-red-600" aria-label="Remove file"><X className="h-3.5 w-3.5" /></button>
+            </p>
+          ) : (
+            <div className="flex items-center gap-1.5 text-xs text-navy-400 mt-1">
+              <FileUpload category="discipline" accept="image/*,application/pdf" onUploaded={setFile} label="Upload Proof / Take Photo" />
+              <span>Supports images, camera photos &amp; PDFs</span>
+            </div>
+          )}
+        </div>
+
         <Button onClick={save} disabled={saving || !f.studentId || f.description.trim().length < 5} className="w-full">
           {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldAlert className="h-4 w-4" />} Record incident
         </Button>

@@ -12,15 +12,18 @@ import { NeyoLogo } from "@/components/brand/neyo-logo";
  * Top bar (Odoo module switcher + Linear Cmd+K search affordance).
  * The module switcher and search are wired to real features in later chunks
  * (A.11 Search, A.7 Notifications). For now they present the correct surface.
+ * Upgraded to show the school badge/logo in place of NEYO's icon at the top-left.
  */
 export function Topbar({
   tenantName,
+  tenantLogoUrl,
   userName,
   userRole,
   canViewAs = false,
   onMenuClick,
 }: {
   tenantName: string;
+  tenantLogoUrl?: string | null;
   userName: string;
   userRole: string;
   canViewAs?: boolean;
@@ -37,9 +40,17 @@ export function Topbar({
         <Menu className="h-5 w-5" />
       </button>
 
-      {/* Brand + module switcher */}
+      {/* Brand + module switcher: replaced N icon with the school badge/logo if available */}
       <div className="flex items-center gap-2">
-        <NeyoLogo variant="mark" className="h-8" title="NEYO" />
+        {tenantLogoUrl ? (
+          <img
+            src={tenantLogoUrl}
+            alt={tenantName}
+            className="h-8 w-8 rounded-full object-cover border border-navy-200/50 shadow-sm"
+          />
+        ) : (
+          <NeyoLogo variant="mark" className="h-8" title="NEYO" />
+        )}
         <button className="hidden items-center gap-1.5 rounded-full px-2.5 py-1.5 text-sm font-semibold text-navy-800 hover:bg-navy-100 dark:text-navy-100 dark:hover:bg-navy-800 sm:flex">
           {tenantName}
           <ChevronDown className="h-4 w-4 text-navy-400" />

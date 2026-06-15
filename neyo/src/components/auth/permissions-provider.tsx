@@ -7,30 +7,36 @@ import * as React from "react";
  * Seeded from the server (no loading flash) and kept in sync client-side.
  * The frontend check is a UX convenience; the backend requirePermission()
  * stays the real security boundary. Both read the same matrix.
+ * Upgraded to support dual roles (role + secondaryRole) on the client side!
  */
 interface PermissionsState {
   role: string | null;
+  secondaryRole: string | null;
   permissions: string[];
   ready: boolean;
 }
 
 const PermissionsContext = React.createContext<PermissionsState>({
   role: null,
+  secondaryRole: null,
   permissions: [],
   ready: false,
 });
 
 export function PermissionsProvider({
   initialRole,
+  initialSecondaryRole = null,
   initialPermissions,
   children,
 }: {
   initialRole: string | null;
+  initialSecondaryRole?: string | null;
   initialPermissions: string[];
   children: React.ReactNode;
 }) {
   const [state, setState] = React.useState<PermissionsState>({
     role: initialRole,
+    secondaryRole: initialSecondaryRole,
     permissions: initialPermissions,
     ready: true, // seeded from server -> immediately usable
   });
@@ -44,6 +50,7 @@ export function PermissionsProvider({
         if (active && j.ok) {
           setState({
             role: j.data.role,
+            secondaryRole: j.data.secondaryRole ?? null,
             permissions: j.data.permissions ?? [],
             ready: true,
           });
@@ -62,22 +69,22 @@ export function PermissionsProvider({
   );
 }
 
-/** Full permissions context (role + list + helpers). */
+/** Full permissions context (role + secondaryRole + list + helpers). */
 export function usePermissions() {
-  const ctx = React.useContext(PermissionsContext);
+  const context = React.useContext(PermissionsContext);
   const has = React.useCallback(
-    (perm: string) => ctx.permissions.includes(perm),
-    [ctx.permissions]
+    (perm: string) => context.permissions.includes(perm),
+    [context.permissions]
   );
   const hasAny = React.useCallback(
-    (perms: string[]) => perms.some((p) => ctx.permissions.includes(p)),
-    [ctx.permissions]
+    (perms: string[]) => perms.some((p) => context.permissions.includes(p)),
+    [context.permissions]
   );
   const hasAll = React.useCallback(
-    (perms: string[]) => perms.every((p) => ctx.permissions.includes(p)),
-    [ctx.permissions]
+    (perms: string[]) => perms.every((p) => context.permissions.includes(p)),
+    [context.permissions]
   );
-  return { ...ctx, has, hasAny, hasAll };
+  return { ...context, has, hasAny, hasAll };
 }
 
 /** Boolean hook: usePermission("finance.record_payment") -> true/false. */

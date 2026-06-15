@@ -30,10 +30,10 @@ export default async function AppLayout({
   if (!ctx) redirect("/login");
   const user = ctx.user; // effective user (impersonated, if impersonating)
 
-  // Effective tenant for the top-bar module switcher.
+  // Effective tenant for the top-bar module switcher and branding.
   const tenant = await db.tenant.findUnique({
     where: { id: user.tenantId },
-    select: { name: true, slug: true },
+    select: { name: true, slug: true, logoUrl: true },
   });
 
   // A.2.3 enforcement: skip while impersonating (admin operates cross-tenant).
@@ -50,7 +50,10 @@ export default async function AppLayout({
   const enabledModules = Array.from(await getEnabledModuleKeys(user.tenantId));
 
   // A.3.4/A.3.5: seed frontend permissions from the server (no flash).
-  const permissions = permissionsForRole(user.role);
+  // Support dual roles by combining permissions!
+  const p1 = permissionsForRole(user.role);
+  const p2 = user.secondaryRole ? permissionsForRole(user.secondaryRole) : [];
+  const permissions = Array.from(new Set([...p1, ...p2])).sort();
 
   // Distinguish the two "acting as" modes:
   //  - View-As (G.5): in-school, read-only -> blue banner.
@@ -67,7 +70,7 @@ export default async function AppLayout({
   const demo = await demoStatus(user.tenantId);
 
   return (
-    <PermissionsProvider initialRole={user.role} initialPermissions={permissions}>
+    <PermissionsProvider initialRole={user.role} initialSecondaryRole={user.secondaryRole} initialPermissions={permissions}>
       <LangProvider initialLang={isLang(user.language) ? user.language : "en"}>
         {demo.isDemo && <DemoBanner hoursLeft={demo.hoursLeft ?? 0} />}
         {isSuperImpersonation && (
@@ -79,6 +82,7 @@ export default async function AppLayout({
         {isViewAs && <ViewAsBanner actingAs={user.fullName} />}
         <AppShell
           tenantName={tenant?.name ?? "NEYO"}
+          tenantLogoUrl={tenant?.logoUrl}
           userName={user.fullName}
           userRole={ROLE_LABELS[user.role]}
           enabledModules={enabledModules}

@@ -8,6 +8,8 @@ import { withTenant } from "@/lib/core/tenant-context";
 import { tenantDb } from "@/lib/core/tenant-db";
 import { scopeWhere } from "@/lib/services/student.service";
 import { cbcLevel, grade844 } from "@/lib/validations/exams";
+import { checkSmsQuota, recordUsage } from "@/lib/services/limits.service";
+import { sendSms } from "@/lib/notifications/sms";
 import type { SessionUser } from "@/lib/core/session";
 
 export class ExamError extends Error {
@@ -63,8 +65,52 @@ export async function publishExam(user: SessionUser, examId: string, published: 
   return withTenant(user.tenantId, async () => {
     const exam = await tenantDb().exam.findUnique({ where: { id: examId } });
     if (!exam) throw new ExamError("NOT_FOUND", "Exam not found.");
+    
     await tenantDb().exam.update({ where: { id: examId }, data: { published } });
     await audit(user, published ? "exam.published" : "exam.unpublished", examId);
+
+    // 1-Tap Mean Grade Release Auto-Notification (Chunk C - Part 2)
+    if (published) {
+      const summary = await examSummary(user, examId);
+      const tenant = await db.tenant.findUniqueOrThrow({ where: { id: user.tenantId }, select: { name: true } });
+      const students = summary.students;
+
+      // Check remaining school SMS quota before dispatching bulk alerts
+      const quota = await checkSmsQuota(user.tenantId, students.length);
+      if (quota.allowed) {
+        let sentCount = 0;
+        for (const s of students) {
+          const link = await tenantDb().studentGuardian.findFirst({
+            where: { studentId: s.studentId, isPrimary: true },
+            include: { guardian: true },
+          }) ?? await tenantDb().studentGuardian.findFirst({
+            where: { studentId: s.studentId },
+            include: { guardian: true },
+          });
+
+          if (link?.guardian.phone) {
+            const msg = `Dear Parent, ${tenant.name} has released results for "${exam.name}". Your child ${s.name} got average: ${s.avgPct}% (Pos ${s.position}). View full details on NEYO Parent Portal.`;
+            try {
+              await sendSms(link.guardian.phone, msg);
+              sentCount++;
+            } catch {
+              // skip failed carrier logs
+            }
+          }
+        }
+        if (sentCount > 0) {
+          await recordUsage(user.tenantId, "smsPerTerm", sentCount);
+          await db.auditLog.create({
+            data: {
+              tenantId: user.tenantId, actorId: user.id, actorName: user.fullName,
+              action: "exam.release_sms_sent", entityType: "exam", entityId: examId,
+              metadata: JSON.stringify({ sent: sentCount }),
+            },
+          });
+        }
+      }
+    }
+
     return { id: examId, published };
   });
 }

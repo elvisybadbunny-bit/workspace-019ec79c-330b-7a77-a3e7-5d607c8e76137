@@ -81,7 +81,7 @@ async function smsGuardian(user: SessionUser, studentId: string, message: string
 
 export async function reportIncident(
   user: SessionUser,
-  input: { studentId: string; date: string; category: string; severity: string; description: string; actionTaken?: string }
+  input: { studentId: string; date: string; category: string; severity: string; description: string; actionTaken?: string; proofFileUrl?: string; proofFileName?: string }
 ) {
   return withTenant(user.tenantId, async () => {
     const student = await assertStudentInScope(user, input.studentId);
@@ -94,6 +94,8 @@ export async function reportIncident(
         date: input.date, category: input.category, severity: input.severity, points,
         description: input.description, actionTaken: input.actionTaken ?? null,
         reportedById: user.id, reportedByName: user.fullName,
+        proofFileUrl: input.proofFileUrl ?? null,
+        proofFileName: input.proofFileName ?? null,
       },
     });
 
@@ -167,14 +169,19 @@ export async function issueSuspension(
   input: { studentId: string; startDate: string; endDate: string; reason: string; conditions?: string }
 ) {
   return withTenant(user.tenantId, async () => {
-    // Suspensions are leadership business — teachers report, deputies suspend.
-    if (!can(user.role as Role, "counseling.confidential"))
-      throw new DisciplineError("FORBIDDEN", "Only the principal or deputy can issue suspensions.");
+    // HODs, Deans, and teachers with discipline view/manage can create, but only Principal/Deputy can auto-approve.
+    const allowedRoles = ["PRINCIPAL", "DEPUTY_PRINCIPAL", "SCHOOL_OWNER", "SUPER_ADMIN"];
+    const isLeadership = allowedRoles.includes(user.role) || (user.secondaryRole && allowedRoles.includes(user.secondaryRole));
+
     const student = await tenantDb().student.findFirst({ where: { id: input.studentId, deletedAt: null } });
     if (!student) throw new DisciplineError("NOT_FOUND", "Student not found.");
     if (input.endDate < input.startDate) throw new DisciplineError("INVALID", "End date must be after the start date.");
-    const existing = await tenantDb().suspension.findFirst({ where: { studentId: student.id, status: "ACTIVE" } });
-    if (existing) throw new DisciplineError("ALREADY", "This student already has an active suspension.");
+    
+    const existing = await tenantDb().suspension.findFirst({ where: { studentId: student.id, status: { in: ["ACTIVE", "PENDING"] } } });
+    if (existing) throw new DisciplineError("ALREADY", "This student already has an active or pending suspension.");
+
+    // Starts as PENDING if issued by an HOD/Dean; starts as ACTIVE if issued directly by Principal/Deputy.
+    const status = isLeadership ? "ACTIVE" : "PENDING";
 
     const susp = await db.suspension.create({
       data: {
@@ -182,22 +189,66 @@ export async function issueSuspension(
         studentName: fullName(student), admissionNo: student.admissionNo,
         startDate: input.startDate, endDate: input.endDate,
         reason: input.reason, conditions: input.conditions ?? null,
+        status,
         issuedById: user.id, issuedByName: user.fullName,
       },
     });
 
-    // ALWAYS notify the guardian of a suspension.
-    const tenant = await db.tenant.findUniqueOrThrow({ where: { id: user.tenantId }, select: { name: true } });
-    const notified = await smsGuardian(
-      user, student.id,
-      `${tenant.name}: ${student.firstName} ${student.lastName} has been suspended from ${input.startDate} to ${input.endDate}. ${input.conditions ? `Conditions: ${input.conditions}. ` : ""}Please come to the school office.`
-    );
-    if (notified) await tenantDb().suspension.update({ where: { id: susp.id }, data: { parentNotifiedAt: new Date() } });
+    let notified = false;
+    if (status === "ACTIVE") {
+      // ALWAYS notify the guardian of an active/approved suspension.
+      const tenant = await db.tenant.findUniqueOrThrow({ where: { id: user.tenantId }, select: { name: true } });
+      notified = await smsGuardian(
+        user, student.id,
+        `${tenant.name}: ${student.firstName} ${student.lastName} has been suspended from ${input.startDate} to ${input.endDate}. ${input.conditions ? `Conditions: ${input.conditions}. ` : ""}Please come to the school office.`
+      );
+      if (notified) await tenantDb().suspension.update({ where: { id: susp.id }, data: { parentNotifiedAt: new Date() } });
+    }
 
-    await audit(user, "discipline.suspension_issued", "suspension", susp.id, {
+    await audit(user, status === "ACTIVE" ? "discipline.suspension_issued" : "discipline.suspension_proposed", "suspension", susp.id, {
       student: susp.studentName, startDate: input.startDate, endDate: input.endDate, parentNotified: notified,
     });
-    return { id: susp.id, parentNotified: notified };
+    
+    return { id: susp.id, status, parentNotified: notified };
+  });
+}
+
+/** Approve a proposed suspension (Principal / Deputy Only) (H.3) */
+export async function approveSuspension(user: SessionUser, suspensionId: string) {
+  return withTenant(user.tenantId, async () => {
+    const allowedRoles = ["PRINCIPAL", "DEPUTY_PRINCIPAL", "SCHOOL_OWNER", "SUPER_ADMIN"];
+    const isLeadership = allowedRoles.includes(user.role) || (user.secondaryRole && allowedRoles.includes(user.secondaryRole));
+    if (!isLeadership) {
+      throw new DisciplineError("FORBIDDEN", "Only the Principal or Deputy Principal has the authority to approve suspensions.");
+    }
+
+    const s = await tenantDb().suspension.findUnique({ where: { id: suspensionId } });
+    if (!s) throw new DisciplineError("NOT_FOUND", "Suspension not found.");
+    if (s.status !== "PENDING") throw new DisciplineError("ALREADY", "This suspension has already been decided.");
+
+    // Update status to ACTIVE
+    const updated = await tenantDb().suspension.update({
+      where: { id: suspensionId },
+      data: { status: "ACTIVE" },
+    });
+
+    // Notify the guardian
+    const tenant = await db.tenant.findUniqueOrThrow({ where: { id: user.tenantId }, select: { name: true } });
+    const student = await tenantDb().student.findUniqueOrThrow({ where: { id: s.studentId } });
+    const notified = await smsGuardian(
+      user, s.studentId,
+      `${tenant.name}: Suspension approved for ${student.firstName} ${student.lastName} from ${s.startDate} to ${s.endDate}. Please come to the school office.`
+    );
+    
+    if (notified) {
+      await tenantDb().suspension.update({ where: { id: suspensionId }, data: { parentNotifiedAt: new Date() } });
+    }
+
+    await audit(user, "discipline.suspension_approved", "suspension", suspensionId, {
+      student: s.studentName, parentNotified: notified,
+    });
+
+    return { id: suspensionId, status: "ACTIVE", parentNotified: notified };
   });
 }
 

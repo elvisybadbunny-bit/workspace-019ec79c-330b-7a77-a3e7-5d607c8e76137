@@ -15,7 +15,7 @@ import { ok, handleError, fail } from "@/lib/api/respond";
 import { incidentSchema, suspensionSchema, counselingSchema } from "@/lib/validations/discipline";
 import {
   reportIncident, listIncidents, behaviorBoard, issueSuspension, listSuspensions,
-  completeSuspension, addCounselingNote, listCounselingNotes, childDiscipline,
+  completeSuspension, addCounselingNote, listCounselingNotes, childDiscipline, approveSuspension,
 } from "@/lib/services/discipline.service";
 
 export const dynamic = "force-dynamic";
@@ -49,13 +49,17 @@ export async function POST(req: NextRequest) {
     const user = await requirePermission("discipline.manage");
     const body = await req.json().catch(() => ({}));
     const action = z
-      .object({ action: z.enum(["incident", "suspend", "completeSuspension", "counseling"]) })
+      .object({ action: z.enum(["incident", "suspend", "completeSuspension", "counseling", "approveSuspension"]) })
       .parse(body).action;
     if (action === "incident") return ok(await reportIncident(user, incidentSchema.parse(body)), 201);
     if (action === "suspend") return ok(await issueSuspension(user, suspensionSchema.parse(body)), 201);
     if (action === "completeSuspension") {
       const { suspensionId } = z.object({ suspensionId: z.string().min(1) }).parse(body);
       return ok(await completeSuspension(user, suspensionId));
+    }
+    if (action === "approveSuspension") {
+      const { suspensionId } = z.object({ suspensionId: z.string().min(1) }).parse(body);
+      return ok(await approveSuspension(user, suspensionId));
     }
     return ok(await addCounselingNote(user, counselingSchema.parse(body)), 201);
   } catch (e) {

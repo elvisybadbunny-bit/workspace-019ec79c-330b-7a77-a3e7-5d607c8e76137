@@ -9,7 +9,7 @@ import { z } from "zod";
 import { requirePermission } from "@/lib/core/session";
 import { ok, handleError, fail } from "@/lib/api/respond";
 import { slotSchema, autoFillSchema } from "@/lib/validations/academics";
-import { getTimetable, teacherTimetable, setSlot, clearSlot, autoFill } from "@/lib/services/academics.service";
+import { getTimetable, teacherTimetable, setSlot, clearSlot, autoFill, bulkSaturdaySchedule } from "@/lib/services/academics.service";
 
 export const dynamic = "force-dynamic";
 
@@ -31,11 +31,20 @@ export async function POST(req: NextRequest) {
   try {
     const user = await requirePermission("academics.manage");
     const body = await req.json();
-    const action = z.enum(["set", "clear", "autofill"]).parse(body?.action);
+    const action = z.enum(["set", "clear", "autofill", "bulkSaturday"]).parse(body?.action);
     if (action === "set") return ok(await setSlot(user, slotSchema.parse(body)));
     if (action === "clear") {
       const { classId, dayOfWeek, period } = z.object({ classId: z.string(), dayOfWeek: z.coerce.number(), period: z.coerce.number() }).parse(body);
       return ok(await clearSlot(user, classId, dayOfWeek, period));
+    }
+    if (action === "bulkSaturday") {
+      const input = z.object({
+        classIds: z.array(z.string()),
+        periodIds: z.array(z.coerce.number().int()),
+        subjectId: z.string(),
+        teacherId: z.string().optional().or(z.literal("")),
+      }).parse(body);
+      return ok(await bulkSaturdaySchedule(user, input));
     }
     return ok(await autoFill(user, autoFillSchema.parse(body)));
   } catch (e) {

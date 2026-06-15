@@ -5,6 +5,7 @@
  * - `requireRole(...)` is the backend guard every protected feature will call.
  *
  * NOTE: these read the REAL Session table created in Chunk 1 — no mocks.
+ * Upgraded to support dual roles for staff members holding 2 roles simultaneously.
  */
 import { cookies } from "next/headers";
 import { db } from "@/lib/db";
@@ -22,6 +23,7 @@ export interface SessionUser {
   phone: string | null;
   email: string | null;
   role: Role;
+  secondaryRole: Role | null;
   language: string;
 }
 
@@ -77,6 +79,7 @@ function toSessionUser(u: {
   phone: string | null;
   email: string | null;
   role: string;
+  secondaryRole?: string | null;
   language?: string;
 }): SessionUser {
   return {
@@ -87,6 +90,7 @@ function toSessionUser(u: {
     phone: u.phone,
     email: u.email,
     role: isRole(u.role) ? u.role : ("STUDENT" as Role),
+    secondaryRole: u.secondaryRole && isRole(u.secondaryRole) ? u.secondaryRole : null,
     language: u.language ?? "en",
   };
 }
@@ -192,7 +196,9 @@ export async function requireUser(): Promise<SessionUser> {
 /** Backend guard: require one of the allowed roles (A.3 enforcement). */
 export async function requireRole(...allowed: Role[]): Promise<SessionUser> {
   const user = await requireUser();
-  if (allowed.length > 0 && !allowed.includes(user.role)) {
+  const hasPrimary = allowed.includes(user.role);
+  const hasSecondary = user.secondaryRole ? allowed.includes(user.secondaryRole) : false;
+  if (allowed.length > 0 && !hasPrimary && !hasSecondary) {
     throw new AuthError(403, "You do not have permission to do this.");
   }
   return user;
@@ -214,7 +220,12 @@ export async function requirePermission(
     throw new AuthError(403, "You're previewing in read-only mode.");
   }
 
-  const missing = needed.filter((p) => !can(ctx.user.role, p));
+  const missing = needed.filter((p) => {
+    const hasPrimary = can(ctx.user.role, p);
+    const hasSecondary = ctx.user.secondaryRole ? can(ctx.user.secondaryRole, p) : false;
+    return !hasPrimary && !hasSecondary;
+  });
+
   if (missing.length > 0) {
     throw new AuthError(403, "You do not have permission to do this.");
   }

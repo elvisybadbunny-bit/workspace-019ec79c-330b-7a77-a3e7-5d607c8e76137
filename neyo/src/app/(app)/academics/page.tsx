@@ -7,7 +7,9 @@ export const dynamic = "force-dynamic";
 /** B.4 Academics — subjects, departments, terms, timetable, lesson plans. */
 export default async function AcademicsPage() {
   const user = await requirePagePermission("academics.view");
-  const canManage = can(user.role, "academics.manage");
+  const hasPrimary = can(user.role, "academics.manage");
+  const hasSecondary = user.secondaryRole ? can(user.secondaryRole, "academics.manage") : false;
+  const canManage = hasPrimary || hasSecondary;
 
   return (
     <div className="space-y-6">

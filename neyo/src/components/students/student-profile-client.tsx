@@ -5,7 +5,7 @@ import {
   Phone, Mail, Hash, CalendarDays, GraduationCap,
   FileText, CheckCircle2, Circle, Plus, ShieldCheck,
   ArrowRightLeft, Download, Undo2, Loader2, X,
-  Users, Wallet, Percent, CreditCard,
+  Users, Wallet, Percent, CreditCard, Award,
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { FileUpload } from "@/components/ui/file-upload";
 import { useToast } from "@/components/ui/toast";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface Guardian { id: string; guardianId: string; relationship: string; isPrimary: boolean; guardian: { id: string; fullName: string; phone: string; email: string | null; userId: string | null } }
 interface Doc { id: string; label: string; fileUrl: string; fileName: string | null; createdAt: string }
@@ -258,6 +259,9 @@ export function StudentProfileClient({ initial, canEdit }: { initial: Student; c
             ))}
           </CardContent>
         </Card>
+
+        {/* Leaving Certificate Vault (H.3) */}
+        <LeavingCertificateCard studentId={s.id} canEdit={canEdit} />
       </div>
 
       {transferDialog && (
@@ -642,6 +646,238 @@ function FamilyCard({ studentId, canManageFinance }: { studentId: string; canMan
         )}
         {canManageFinance && data.siblingDiscountPct === 0 && (
           <p className="text-[11px] text-navy-400">Tip: set a sibling discount % in Settings → School profile to reward multi-child families.</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ---- Leaving Certificate Vault Card (Chunk E — Part 4) -----------------------------
+interface CertData { id: string; certificateType: string; certificateNo: string; status: string; hardcopyLocation: string; fileUrl: string | null; fileName: string | null; handedOverTo: string | null; handedOverAt: string | null; handedOverByName: string | null }
+
+function LeavingCertificateCard({ studentId, canEdit }: { studentId: string; canEdit: boolean }) {
+  const { toast } = useToast();
+  const [cert, setCert] = React.useState<CertData | null>(null);
+  const [loading, setLoading] = React.useState(true);
+  const [vaulting, setVaulting] = React.useState(false);
+  const [handingOver, setHandingOver] = React.useState(false);
+
+  // Form states
+  const [certType, setCertType] = React.useState("KCSE");
+  const [certNo, setCertNo] = React.useState("");
+  const [hardcopyLoc, setHardcopyLoc] = React.useState("");
+  const [file, setFile] = React.useState<any | null>(null);
+  const [recipient, setRecipient] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/students/${studentId}/leaving-certificate`);
+      const json = await res.json();
+      if (json.ok) setCert(json.data.cert);
+    } catch { /* ignore */ }
+    finally { setLoading(false); }
+  }, [studentId]);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  async function handleVault() {
+    if (!certNo.trim()) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/students/${studentId}/leaving-certificate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "vault",
+          certificateType: certType,
+          certificateNo: certNo.trim(),
+          hardcopyLocation: hardcopyLoc.trim(),
+          fileUrl: file?.url || undefined,
+          fileName: file?.fileName || undefined,
+        }),
+      });
+      const json = await res.json();
+      if (json.ok) {
+        toast({ title: "Certificate successfully vaulted!", tone: "success" });
+        setVaulting(false);
+        setCertNo("");
+        setFile(null);
+        load();
+      } else {
+        toast({ title: json.error?.message || "Failed to vault", tone: "error" });
+      }
+    } finally { setBusy(false); }
+  }
+
+  async function handleHandover() {
+    if (!recipient.trim()) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/students/${studentId}/leaving-certificate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "handover",
+          handedOverTo: recipient.trim(),
+        }),
+      });
+      const json = await res.json();
+      if (json.ok) {
+        toast({ title: "Handover recorded & parent notified!", tone: "success" });
+        setHandingOver(false);
+        setRecipient("");
+        load();
+      } else {
+        toast({ title: json.error?.message || "Failed to log handover", tone: "error" });
+      }
+    } finally { setBusy(false); }
+  }
+
+  if (loading) return <Skeleton className="h-40 rounded-2xl" />;
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between pb-2">
+        <CardTitle className="flex items-center gap-1.5">
+          <Award className="h-4.5 w-4.5 text-green-600" />
+          Leaving Certificate Vault
+        </CardTitle>
+        {cert && (
+          <Badge tone={cert.status === "STORED" ? "green" : "neutral"}>
+            {cert.status === "STORED" ? "Safe in Vault" : "Handed Over"}
+          </Badge>
+        )}
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {!cert ? (
+          <div className="space-y-3">
+            <p className="text-xs text-navy-400">
+              No academic leaving certificate logged in the NEYO vault yet. Keep certificates safe digitally and track their handovers.
+            </p>
+            {canEdit && (
+              <Button size="sm" variant="secondary" onClick={() => setVaulting(true)} className="w-full">
+                <Plus className="h-4 w-4" /> Vault a Certificate
+              </Button>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-3 text-sm">
+            <div className="flex justify-between border-b border-navy-100/30 pb-2">
+              <span className="text-navy-400 text-xs">Certificate Number</span>
+              <span className="font-mono font-bold text-navy-800 dark:text-navy-100">{cert.certificateType}: {cert.certificateNo}</span>
+            </div>
+            <div className="flex justify-between border-b border-navy-100/30 pb-2">
+              <span className="text-navy-400 text-xs">Hardcopy File Location</span>
+              <span className="font-semibold text-navy-800 dark:text-navy-100">{cert.hardcopyLocation}</span>
+            </div>
+
+            {cert.status === "STORED" ? (
+              <div className="space-y-3">
+                <p className="text-xs text-green-600 font-semibold bg-green-500/10 px-3 py-2 rounded-xl flex items-center gap-1.5 border border-green-500/25">
+                  <CheckCircle2 className="h-4 w-4 text-green-600" />
+                  Prised in School Vault · Original Copy Secure
+                </p>
+                {cert.fileUrl && (
+                  <a href={cert.fileUrl} download={cert.fileName ?? undefined} className="flex items-center gap-2 rounded-xl bg-warm-50 px-3 py-2 text-xs text-navy-600 dark:bg-navy-800 dark:text-navy-300">
+                    <FileText className="h-4 w-4 text-navy-400" />
+                    <span>Download Scanned Certificate ({cert.fileName || "Download"})</span>
+                  </a>
+                )}
+                {canEdit && (
+                  <Button size="sm" onClick={() => setHandingOver(true)} className="w-full">
+                    Record Physical Handover
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-2 text-xs">
+                <div className="flex justify-between border-b border-navy-100/30 pb-2 text-sm">
+                  <span className="text-navy-400">Physically Handed To</span>
+                  <span className="font-bold text-navy-800 dark:text-navy-100">{cert.handedOverTo}</span>
+                </div>
+                <div className="flex justify-between border-b border-navy-100/30 pb-2">
+                  <span className="text-navy-400">Handover Date</span>
+                  <span className="text-navy-700 dark:text-navy-300">
+                    {cert.handedOverAt ? new Date(cert.handedOverAt).toLocaleDateString("en-KE", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-navy-400">Authorized By</span>
+                  <span className="text-navy-700 dark:text-navy-300">{cert.handedOverByName}</span>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Vaulting Dialog */}
+        {vaulting && (
+          <div className="fixed inset-0 z-[60] flex items-end justify-center bg-navy-950/40 p-4 backdrop-blur-sm sm:items-center" onClick={() => setVaulting(false)}>
+            <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-card dark:bg-navy-900 border border-navy-100 dark:border-navy-800" onClick={(e) => e.stopPropagation()}>
+              <div className="mb-4 flex items-start justify-between">
+                <h3 className="text-base font-bold text-navy-900 dark:text-navy-50">Vault Original Certificate</h3>
+                <button onClick={() => setVaulting(false)} className="rounded-full p-1 text-navy-400 hover:bg-navy-50 dark:hover:bg-navy-800" aria-label="Close"><X className="h-4 w-4" /></button>
+              </div>
+              <div className="space-y-3">
+                <div>
+                  <Label>Certificate Type</Label>
+                  <select value={certType} onChange={(e) => setCertType(e.target.value)} className="mt-1 w-full rounded-2xl border border-navy-200 bg-white px-3.5 py-2.5 text-sm dark:border-navy-700 dark:bg-navy-900 text-navy-850">
+                    <option value="KCSE">KCSE Leaving Certificate</option>
+                    <option value="KCPE">KCPE Leaving Certificate</option>
+                    <option value="OTHER">Other Academic Certificate</option>
+                  </select>
+                </div>
+                <div>
+                  <Label>Original Certificate Number</Label>
+                  <Input value={certNo} onChange={(e) => setCertNo(e.target.value)} placeholder="e.g. 19280392 / 2026" />
+                </div>
+                <div>
+                  <Label>Physical Hardcopy File Location (MANDATORY)</Label>
+                  <Input value={hardcopyLoc} onChange={(e) => setHardcopyLoc(e.target.value)} placeholder="e.g. File Cabinet 3, Drawer B, Folder 12" />
+                </div>
+                <div>
+                  <Label>Upload Scanned Scan (Optional)</Label>
+                  {file ? (
+                    <p className="flex items-center gap-2 rounded-xl bg-warm-50 px-3 py-2 text-xs text-navy-600 dark:bg-navy-800 dark:text-navy-300">
+                      <FileText className="h-3.5 w-3.5 text-green-600" /> {file.fileName}
+                      <button onClick={() => setFile(null)} className="ml-auto text-navy-400 hover:text-red-600" aria-label="Remove file"><X className="h-3.5 w-3.5" /></button>
+                    </p>
+                  ) : (
+                    <FileUpload category="certificate" accept="image/*,application/pdf" onUploaded={setFile} label="Upload Scanned Certificate" />
+                  )}
+                </div>
+                <Button onClick={handleVault} disabled={busy || !certNo.trim() || !hardcopyLoc.trim()} className="w-full">
+                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Secure in Vault
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Handover Dialog */}
+        {handingOver && (
+          <div className="fixed inset-0 z-[60] flex items-end justify-center bg-navy-950/40 p-4 backdrop-blur-sm sm:items-center" onClick={() => setHandingOver(false)}>
+            <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-card dark:bg-navy-900 border border-navy-100 dark:border-navy-800" onClick={(e) => e.stopPropagation()}>
+              <div className="mb-4 flex items-start justify-between">
+                <h3 className="text-base font-bold text-navy-900 dark:text-navy-50">Log Certificate Handover</h3>
+                <button onClick={() => setHandingOver(false)} className="rounded-full p-1 text-navy-400 hover:bg-navy-50 dark:hover:bg-navy-800" aria-label="Close"><X className="h-4 w-4" /></button>
+              </div>
+              <div className="space-y-3">
+                <p className="text-xs text-navy-400">
+                  This records the physical handover of the original certificate, freezing the vault record with signed receipt details.
+                </p>
+                <div>
+                  <Label>Handed Over To (Full Name)</Label>
+                  <Input value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="e.g. Mary Wanjiru (Student)" />
+                </div>
+                <Button onClick={handleHandover} disabled={busy || !recipient.trim()} className="w-full">
+                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} Confirm Physical Handover
+                </Button>
+              </div>
+            </div>
+          </div>
         )}
       </CardContent>
     </Card>

@@ -37,7 +37,7 @@ export function CafeteriaClient({ canManage }: { canManage: boolean }) {
   const { toast } = useToast();
   const [data, setData] = React.useState<Data | null>(null);
   const [error, setError] = React.useState(false);
-  const [tab, setTab] = React.useState<"today" | "menu" | "cards">("today");
+  const [tab, setTab] = React.useState<"today" | "menu" | "cards" | "tables">("today");
   const [students, setStudents] = React.useState<StudentOpt[]>([]);
   const [editCell, setEditCell] = React.useState<{ day: number; meal: string; current: string } | null>(null);
   const [issuing, setIssuing] = React.useState(false);
@@ -54,8 +54,8 @@ export function CafeteriaClient({ canManage }: { canManage: boolean }) {
   React.useEffect(() => {
     load();
     fetch("/api/students?status=ACTIVE").then((r) => r.json()).then((j) => {
-      if (j.ok) setStudents(j.data.students.map((s: { id: string; firstName: string; middleName?: string | null; lastName: string; admissionNo: string }) => ({
-        id: s.id, name: [s.firstName, s.middleName, s.lastName].filter(Boolean).join(" "), admissionNo: s.admissionNo,
+      if (j.ok) setStudents(j.data.students.map((s: { id: string; firstName: string; middleName?: string | null; lastName: string; admissionNo: string; className: string | null }) => ({
+        id: s.id, name: [s.firstName, s.middleName, s.lastName].filter(Boolean).join(" "), admissionNo: s.admissionNo, className: s.className,
       })));
     }).catch(() => {});
   }, [load]);
@@ -70,18 +70,58 @@ export function CafeteriaClient({ canManage }: { canManage: boolean }) {
     else toast({ title: json.error?.message || "Failed", tone: "error" });
   }
 
+  // Meal Cards configurator options (H.3)
+  const [mealCardsEnabled, setMealCardsEnabled] = React.useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("neyo_meal_cards_enabled") !== "false";
+    }
+    return true;
+  });
+
+  const [mealPlanScope, setMealPlanScope] = React.useState<string>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("neyo_meal_plan_scope") ?? "ALL";
+    }
+    return "ALL";
+  });
+
+  React.useEffect(() => {
+    localStorage.setItem("neyo_meal_cards_enabled", String(mealCardsEnabled));
+  }, [mealCardsEnabled]);
+
+  React.useEffect(() => {
+    localStorage.setItem("neyo_meal_plan_scope", mealPlanScope);
+  }, [mealPlanScope]);
+
   if (error) return <LoadError onRetry={load} />;
   if (data === null) return <div className="space-y-3"><Skeleton className="h-24 rounded-2xl" /><Skeleton className="h-48 rounded-2xl" /></div>;
 
   const tabs = [
     { key: "today" as const, label: "Kitchen today", icon: Soup },
     { key: "menu" as const, label: "Week menu", icon: CalendarDays },
-    { key: "cards" as const, label: "Meal cards", icon: CreditCard },
+    ...(mealCardsEnabled ? [{ key: "cards" as const, label: "Meal cards", icon: CreditCard }] : []),
+    { key: "tables" as const, label: "Table allocations", icon: Users },
   ];
   const menuFor = (day: number, meal: string) => data.menu.find((m) => m.dayOfWeek === day && m.mealType === meal)?.menu ?? "";
 
   return (
     <div className="space-y-4">
+      {/* If meal cards are disabled, we show a gorgeous banner enabling them back (H.3) */}
+      {!mealCardsEnabled && canManage && (
+        <Card className="border border-dashed border-navy-200 bg-warm-50 p-4 dark:border-navy-800 dark:bg-navy-950 flex items-center justify-between gap-4 animate-fade-in">
+          <div className="space-y-0.5">
+            <p className="text-xs font-semibold text-navy-800 dark:text-navy-200 flex items-center gap-1.5">
+              <CreditCard className="h-4 w-4 text-navy-400" />
+              Meal Cards are currently disabled school-wide.
+            </p>
+            <p className="text-[11px] text-navy-400">All student meal-billing plans are temporarily suspended.</p>
+          </div>
+          <Button size="sm" onClick={() => setMealCardsEnabled(true)}>
+            Enable Meal Cards
+          </Button>
+        </Card>
+      )}
+
       <div className="flex flex-wrap gap-1.5">
         {tabs.map((t) => (
           <button
@@ -190,6 +230,47 @@ export function CafeteriaClient({ canManage }: { canManage: boolean }) {
 
       {tab === "cards" && (
         <div className="space-y-3">
+          {/* Meal Card Configurator Card (H.3) */}
+          {canManage && (
+            <Card className="border border-green-200/50 bg-green-500/5 animate-fade-in">
+              <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div className="space-y-0.5">
+                  <p className="text-sm font-semibold text-navy-800 dark:text-navy-100 flex items-center gap-1.5">
+                    <CreditCard className="h-4 w-4 text-green-600 animate-pulse" />
+                    School Meal Card Configurator
+                  </p>
+                  <p className="text-xs text-navy-400">
+                    Control meal plan invoicing scopes. Unchecked plans will be disabled.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    value={mealPlanScope}
+                    onChange={(e) => setMealPlanScope(e.target.value)}
+                    className="rounded-full border border-green-200 bg-white px-3 py-1.5 text-xs dark:border-navy-700 dark:bg-navy-900 text-navy-850 dark:text-navy-100"
+                  >
+                    <option value="ALL">Full Scope (Breakfast + Lunch + Supper)</option>
+                    <option value="LUNCH">Lunch Only Plan</option>
+                    <option value="SUPPER">Supper Only Plan</option>
+                  </select>
+                  <Button 
+                    size="sm" 
+                    variant="ghost" 
+                    className="text-red-600 border border-red-200/50 bg-red-500/5 hover:bg-red-500/10"
+                    onClick={() => {
+                      if (window.confirm("Are you sure you want to completely turn off meal cards? Parents won't be able to buy cards.")) {
+                        setMealCardsEnabled(false);
+                        setTab("today");
+                      }
+                    }}
+                  >
+                    Turn OFF Cards
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           {canManage && <Button onClick={() => setIssuing(true)}><Plus className="h-4 w-4" /> Issue meal card</Button>}
           {data.cards.length === 0 ? (
             <EmptyState icon={CreditCard} title="No meal cards yet" description="Issue a lunch plan to a day scholar — it bills the family's invoice automatically." action={canManage ? <Button onClick={() => setIssuing(true)}><Plus className="h-4 w-4" /> Issue meal card</Button> : undefined} />
@@ -220,6 +301,10 @@ export function CafeteriaClient({ canManage }: { canManage: boolean }) {
             </div>
           )}
         </div>
+      )}
+
+      {tab === "tables" && (
+        <TableAllocationsTab students={students} />
       )}
 
       {editCell && (
@@ -392,6 +477,101 @@ function LoadError({ onRetry }: { onRetry: () => void }) {
   return (
     <div className="flex items-center gap-2 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-900/20 dark:text-red-300">
       <AlertCircle className="h-4 w-4" /> Couldn&apos;t load. <button onClick={onRetry} className="font-medium underline">Retry</button>
+    </div>
+  );
+}
+
+// ---- School Cafeteria Table Allocations (Chunk E — Part 2) -------------------
+function TableAllocationsTab({ students }: { students: any[] }) {
+  const [tableSize, setTableSize] = React.useState(6);
+  const [allocatedClasses, setAllocatedClasses] = React.useState<any[] | null>(null);
+
+  function runAllocation() {
+    if (students.length === 0) return;
+    
+    // Group students by class name
+    const grouped: Record<string, any[]> = {};
+    for (const s of students) {
+      const cls = s.className || "Unassigned / Guest";
+      if (!grouped[cls]) grouped[cls] = [];
+      grouped[cls].push(s);
+    }
+
+    // Allocate tables stream-by-stream (Form 2 East, Form 1 West, etc.)
+    const result = Object.entries(grouped).map(([className, list]) => {
+      const tables = [];
+      for (let i = 0; i < list.length; i += tableSize) {
+        tables.push({
+          tableNo: Math.floor(i / tableSize) + 1,
+          students: list.slice(i, i + tableSize),
+        });
+      }
+      return { className, tables };
+    }).sort((a, b) => a.className.localeCompare(b.className));
+
+    setAllocatedClasses(result);
+  }
+
+  return (
+    <div className="space-y-4 animate-fade-in">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm flex items-center gap-1.5">
+            <Users className="h-4 w-4 text-green-600 animate-pulse" />
+            School Cafeteria Table Planner
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-end gap-3 pb-5">
+          <div className="space-y-1">
+            <Label>Students Per Table</Label>
+            <select
+              value={tableSize}
+              onChange={(e) => setTableSize(Number(e.target.value))}
+              className="rounded-2xl border border-navy-200 bg-white px-3.5 py-2 text-sm dark:border-navy-700 dark:bg-navy-900 text-navy-800 dark:text-navy-100 h-10 cursor-pointer"
+            >
+              <option value={4}>4 Students / Table</option>
+              <option value={6}>6 Students / Table</option>
+              <option value={8}>8 Students / Table</option>
+              <option value={10}>10 Students / Table</option>
+            </select>
+          </div>
+          <Button onClick={runAllocation} className="h-10">
+            Generate Table Allocations
+          </Button>
+        </CardContent>
+      </Card>
+
+      {allocatedClasses && (
+        <div className="space-y-4">
+          {allocatedClasses.map((ac) => (
+            <Card key={ac.className}>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-bold text-navy-800 dark:text-navy-200">
+                  {ac.className} — {ac.tables.length} Table{ac.tables.length === 1 ? "" : "s"} Assigned
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {ac.tables.map((t: any) => (
+                  <div key={t.tableNo} className="rounded-2xl border border-navy-100 bg-warm-50/50 p-3.5 dark:border-navy-800 dark:bg-navy-950">
+                    <p className="text-xs font-bold text-green-700 dark:text-green-400 border-b border-navy-100/30 pb-1.5 mb-1.5 flex justify-between">
+                      <span>Table {t.tableNo}</span>
+                      <span className="font-normal text-navy-400">({t.students.length} seats)</span>
+                    </p>
+                    <ul className="space-y-1 text-xs">
+                      {t.students.map((s: any) => (
+                        <li key={s.id} className="flex justify-between text-navy-800 dark:text-navy-200">
+                          <span className="font-medium truncate max-w-[140px]">{s.name}</span>
+                          <span className="font-mono text-[10px] text-navy-400">{s.admissionNo}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

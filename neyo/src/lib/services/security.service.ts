@@ -221,3 +221,54 @@ export async function listPanics(user: SessionUser) {
     return tenantDb().panicAlert.findMany({ orderBy: { createdAt: "desc" }, take: 20 });
   });
 }
+
+/** Confirm student pickup at the gate & dispatch auto-SMS to parents (H.3) */
+export async function confirmPickupPerson(user: SessionUser, studentId: string, personId: string) {
+  return withTenant(user.tenantId, async () => {
+    const student = await tenantDb().student.findUnique({
+      where: { id: studentId, deletedAt: null },
+    });
+    if (!student) throw new SecurityError("NOT_FOUND", "Student not found.");
+
+    const person = await tenantDb().pickupPerson.findUnique({
+      where: { id: personId },
+    });
+    if (!person || !person.active) throw new SecurityError("NOT_FOUND", "Pickup person not found or inactive.");
+
+    const tenant = await db.tenant.findUniqueOrThrow({ where: { id: user.tenantId }, select: { name: true } });
+
+    // Find the student's primary guardian or any registered guardian
+    const link = await tenantDb().studentGuardian.findFirst({
+      where: { studentId, isPrimary: true },
+      include: { guardian: true },
+    }) ?? await tenantDb().studentGuardian.findFirst({
+      where: { studentId },
+      include: { guardian: true },
+    });
+
+    const studentName = fullName(student);
+
+    // Dispatch an instant automated SMS to the parent's phone!
+    if (link?.guardian.phone) {
+      const timeStr = new Date().toLocaleTimeString("en-KE", { hour: "2-digit", minute: "2-digit" });
+      const msg = `Dear Parent, your child ${studentName} was picked up from school by ${person.fullName} (${person.relationship}, ID: ${person.nationalId || "Checked"}) at ${timeStr}. Thank you, ${tenant.name}.`;
+      try {
+        const quota = await checkSmsQuota(user.tenantId, 1);
+        if (quota.allowed) {
+          await sendSms(link.guardian.phone, msg);
+          await recordUsage(user.tenantId, "smsPerTerm", 1);
+        }
+      } catch {
+        // ignore and continue
+      }
+    }
+
+    await audit(user, "security.pickup_authorized", "student", studentId, {
+      student: studentName,
+      picker: person.fullName,
+      pickerId: person.nationalId,
+    });
+
+    return { success: true, studentName, pickerName: person.fullName };
+  });
+}

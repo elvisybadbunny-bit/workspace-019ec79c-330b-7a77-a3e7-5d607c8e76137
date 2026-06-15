@@ -40,17 +40,23 @@ export async function listDepartments(user: SessionUser) {
   });
 }
 
-export async function createDepartment(user: SessionUser, input: { name: string; hodId?: string }) {
+export async function createDepartment(user: SessionUser, input: { name: string; hodId?: string; subjectIds?: string[] }) {
   return withTenant(user.tenantId, async () => {
     const dup = await tenantDb().department.findFirst({ where: { name: input.name } });
     if (dup) throw new AcademicsError("DUPLICATE", `Department "${input.name}" already exists.`);
     const d = await tenantDb().department.create({ data: { name: input.name, hodId: input.hodId || null } as never });
+    if (input.subjectIds && input.subjectIds.length > 0) {
+      await tenantDb().subject.updateMany({
+        where: { id: { in: input.subjectIds } },
+        data: { departmentId: d.id }
+      });
+    }
     await audit(user, "academics.department_created", "department", d.id, { name: input.name });
     return d;
   });
 }
 
-export async function updateDepartment(user: SessionUser, id: string, input: { name?: string; hodId?: string }) {
+export async function updateDepartment(user: SessionUser, id: string, input: { name?: string; hodId?: string; subjectIds?: string[] }) {
   return withTenant(user.tenantId, async () => {
     const d = await tenantDb().department.findUnique({ where: { id } });
     if (!d) throw new AcademicsError("NOT_FOUND", "Department not found.");
@@ -61,6 +67,16 @@ export async function updateDepartment(user: SessionUser, id: string, input: { n
         ...(input.hodId !== undefined ? { hodId: input.hodId || null } : {}),
       },
     });
+    if (input.subjectIds !== undefined) {
+      await tenantDb().subject.updateMany({
+        where: { departmentId: id },
+        data: { departmentId: null }
+      });
+      await tenantDb().subject.updateMany({
+        where: { id: { in: input.subjectIds } },
+        data: { departmentId: id }
+      });
+    }
     await audit(user, "academics.department_updated", "department", id);
     return updated;
   });
@@ -147,6 +163,13 @@ export async function listTerms(user: SessionUser) {
 
 export async function upsertTerm(user: SessionUser, input: { year: number; term: number; startDate: string; endDate: string; current: boolean }) {
   return withTenant(user.tenantId, async () => {
+    const allowed = ["PRINCIPAL", "SCHOOL_OWNER", "SUPER_ADMIN"];
+    const hasPrimary = allowed.includes(user.role);
+    const hasSecondary = user.secondaryRole ? allowed.includes(user.secondaryRole) : false;
+    if (!hasPrimary && !hasSecondary) {
+      throw new AcademicsError("FORBIDDEN", "Only the Principal or School Owner can edit or change academic term dates.");
+    }
+
     if (input.current) {
       await tenantDb().academicTerm.updateMany({ where: {}, data: { current: false } });
     }
@@ -365,5 +388,55 @@ export async function setLessonStatus(user: SessionUser, id: string, status: str
       throw new AcademicsError("FORBIDDEN", "You can only update your own lesson plans.");
     await tenantDb().lessonPlan.update({ where: { id }, data: { status } });
     return { id, status };
+  });
+}
+
+/** Bulk Saturday timetable scheduler (Form 6 to 9 / all in one tap!) */
+export async function bulkSaturdaySchedule(
+  user: SessionUser,
+  input: { classIds: string[]; periodIds: number[]; subjectId: string; teacherId?: string; weekRotation?: string }
+) {
+  return withTenant(user.tenantId, async () => {
+    let createdCount = 0;
+    const rotation = input.weekRotation || "ALL";
+    for (const classId of input.classIds) {
+      for (const p of input.periodIds) {
+        await db.timetableSlot.upsert({
+          where: {
+            tenantId_classId_dayOfWeek_period_slotType: {
+              tenantId: user.tenantId,
+              classId,
+              dayOfWeek: 6,
+              period: p,
+              slotType: "ACADEMIC",
+            },
+          },
+          create: {
+            tenantId: user.tenantId,
+            classId,
+            subjectId: input.subjectId,
+            teacherId: input.teacherId || null,
+            dayOfWeek: 6,
+            period: p,
+            slotType: "ACADEMIC",
+            weekRotation: rotation,
+          },
+          update: {
+            subjectId: input.subjectId,
+            teacherId: input.teacherId || null,
+            weekRotation: rotation,
+          },
+        });
+        createdCount++;
+      }
+    }
+
+    await audit(user, "academics.timetable_bulk_saturday", "timetableSlot", user.id, {
+      classes: input.classIds.length,
+      periods: input.periodIds.length,
+      total: createdCount,
+    });
+
+    return { success: true, createdCount };
   });
 }

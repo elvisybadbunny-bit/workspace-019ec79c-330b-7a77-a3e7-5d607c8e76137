@@ -1,7 +1,11 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
-/** NEYO Card — rounded-2xl, soft brand-tinted shadow. */
+/**
+ * NEYO Card — rounded-2xl, soft brand-tinted shadow.
+ * Upgraded with premium micro-motion: on hover, the card slightly lifts,
+ * the shadow increases, and the specular glass reflection shifts beautifully (ease-apple).
+ */
 export function Card({
   className,
   ...props
@@ -11,6 +15,8 @@ export function Card({
       className={cn(
         "rounded-2xl bg-white shadow-card border border-navy-100/70",
         "dark:bg-navy-900 dark:border-navy-800",
+        "transition-all duration-300 ease-apple",
+        "hover:-translate-y-0.5 hover:shadow-card-hover hover:border-navy-200/50 dark:hover:border-navy-700/50",
         className
       )}
       {...props}

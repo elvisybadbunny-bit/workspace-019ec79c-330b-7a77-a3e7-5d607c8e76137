@@ -11,7 +11,7 @@
  * - Overhauled to support printer selection + custom printer additions + per-day limits
  */
 import * as React from "react";
-import { Printer, Play, Pause, Layers, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
+import { Printer, Play, Pause, Layers, CheckCircle2, AlertCircle, Loader2, ShieldAlert, Calendar } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +20,8 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useToast } from "@/components/ui/toast";
+import { usePermissions } from "@/components/auth/permissions-provider";
+import { cn } from "@/lib/utils";
 
 interface Job { id: string; kind: string; title: string; url: string; classLabel: string | null; queuedBy: string; queuedAt: string }
 interface ClassOpt { id: string; name: string }
@@ -27,9 +29,33 @@ interface Structure { id: string; name: string }
 
 export function PrintStationClient() {
   const { toast } = useToast();
+  const { role, secondaryRole } = usePermissions();
+  
+  // Only School Heads (Principal, Deputy, Owner) or Academics HOD can change print limits
+  const canEditLimits = [
+    "PRINCIPAL", "DEPUTY_PRINCIPAL", "DEAN_OF_STUDIES", "SCHOOL_OWNER"
+  ].includes(role ?? "") || (secondaryRole && [
+    "PRINCIPAL", "DEPUTY_PRINCIPAL", "DEAN_OF_STUDIES", "SCHOOL_OWNER"
+  ].includes(secondaryRole));
+
   const [jobs, setJobs] = React.useState<Job[] | null>(null);
   const [printedToday, setPrintedToday] = React.useState(0);
   const [auto, setAuto] = React.useState(true);
+
+  // G.31 Upgraded - Boarding School Batch Printing Mode (completely turn off instant printing)
+  const [boardingMode, setBoardingMode] = React.useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("neyo_boarding_batch_print") === "true";
+    }
+    return false;
+  });
+
+  React.useEffect(() => {
+    localStorage.setItem("neyo_boarding_batch_print", String(boardingMode));
+    if (boardingMode) {
+      setAuto(false); // Force instant auto-print to be completely OFF
+    }
+  }, [boardingMode]);
   const [printing, setPrinting] = React.useState<string | null>(null);
   const [classes, setClasses] = React.useState<ClassOpt[]>([]);
   const [structures, setStructures] = React.useState<Structure[]>([]);
@@ -176,10 +202,22 @@ export function PrintStationClient() {
 
       {/* settings bar */}
       <div className="flex flex-wrap items-center gap-2">
-        <Button onClick={() => setAuto((a) => !a)} variant={auto ? "primary" : "secondary"}>
-          {auto ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />} {auto ? "Auto-print ON" : "Auto-print paused"}
+        <Button 
+          onClick={() => {
+            if (boardingMode) {
+              toast({ title: "Auto-print is disabled in Term-End Batch Mode", tone: "info" });
+              return;
+            }
+            setAuto((a) => !a);
+          }} 
+          variant={auto ? "primary" : "secondary"}
+          disabled={boardingMode}
+        >
+          {auto ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />} 
+          {boardingMode ? "Printer Off (Batch Mode)" : auto ? "Auto-print ON" : "Auto-print paused"}
         </Button>
         <Badge tone="neutral">🖨 {selectedPrinter}</Badge>
+        {boardingMode && <Badge tone="red">🏫 Boarding Term-End Batch Mode</Badge>}
         <Badge tone={limit !== null && printedToday >= limit ? "red" : "neutral"}>
           Limit: {limit === null ? "Unlimited" : `${printedToday}/${limit} prints`}
         </Badge>
@@ -196,49 +234,106 @@ export function PrintStationClient() {
             Printer &amp; Daily Limits
           </CardTitle>
         </CardHeader>
-        <CardContent className="flex flex-wrap items-end gap-4">
-          <div className="space-y-1">
-            <Label htmlFor="printer-select">Select Printer</Label>
-            <select
-              id="printer-select"
-              value={selectedPrinter}
-              onChange={(e) => setSelectedPrinter(e.target.value)}
-              className="rounded-2xl border border-navy-200 bg-white px-3.5 py-2.5 text-sm dark:border-navy-700 dark:bg-navy-900 text-navy-900 dark:text-navy-50"
-            >
-              {printers.map((p) => (
-                <option key={p} value={p}>{p}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="space-y-1">
-            <Label htmlFor="new-printer">Add Custom Printer</Label>
-            <div className="flex gap-2">
-              <Input
-                id="new-printer"
-                value={newPrinter}
-                onChange={(e) => setNewPrinter(e.target.value)}
-                placeholder="e.g. Reception Desk"
-                className="h-10 w-44"
-              />
-              <Button size="sm" onClick={addPrinter} disabled={!newPrinter.trim()}>Add</Button>
+        <CardContent className="space-y-4">
+          
+          {/* Boarding School Switch */}
+          <div className="flex items-center justify-between rounded-2xl border border-navy-100 bg-warm-50 p-4 dark:border-navy-800 dark:bg-navy-950">
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-navy-900 dark:text-navy-50 flex items-center gap-1.5">
+                <Calendar className="h-4 w-4 text-green-600" />
+                Boarding School Term-End Batch Mode
+              </p>
+              <p className="text-xs text-navy-400">
+                Instantly turns off automatic daily receipt/invoice printing. Receipts are quietly queued and saved to be printed as a batch when the term ends!
+              </p>
             </div>
+            <button
+              onClick={() => {
+                if (!canEditLimits) {
+                  toast({ title: "Only School Heads or Academics HOD can toggle Batch Mode.", tone: "error" });
+                  return;
+                }
+                setBoardingMode(!boardingMode);
+                toast({
+                  title: !boardingMode ? "Term-End Batch Mode Activated" : "Batch Mode Disabled",
+                  tone: "success",
+                });
+              }}
+              className={cn(
+                "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none",
+                boardingMode ? "bg-green-500" : "bg-navy-200 dark:bg-navy-700"
+              )}
+            >
+              <span
+                className={cn(
+                  "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out",
+                  boardingMode ? "translate-x-5" : "translate-x-0"
+                )}
+              />
+            </button>
           </div>
 
-          <div className="space-y-1">
-            <Label htmlFor="print-limit">Daily Limit</Label>
-            <select
-              id="print-limit"
-              value={limit === null ? "unlimited" : String(limit)}
-              onChange={(e) => setLimit(e.target.value === "unlimited" ? null : Number(e.target.value))}
-              className="rounded-2xl border border-navy-200 bg-white px-3.5 py-2.5 text-sm dark:border-navy-700 dark:bg-navy-900 text-navy-900 dark:text-navy-50"
-            >
-              <option value="unlimited">Unlimited</option>
-              <option value="10">10 prints</option>
-              <option value="50">50 prints</option>
-              <option value="100">100 prints</option>
-              <option value="200">200 prints</option>
-            </select>
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="space-y-1">
+              <Label htmlFor="printer-select">Select Printer</Label>
+              <select
+                id="printer-select"
+                value={selectedPrinter}
+                onChange={(e) => setSelectedPrinter(e.target.value)}
+                className="rounded-2xl border border-navy-200 bg-white px-3.5 py-2.5 text-sm dark:border-navy-700 dark:bg-navy-900 text-navy-900 dark:text-navy-50"
+              >
+                {printers.map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-1">
+              <Label htmlFor="new-printer">Add Custom Printer</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="new-printer"
+                  value={newPrinter}
+                  onChange={(e) => setNewPrinter(e.target.value)}
+                  placeholder="e.g. Reception Desk"
+                  className="h-10 w-44"
+                />
+                <Button size="sm" onClick={addPrinter} disabled={!newPrinter.trim()}>Add</Button>
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <Label htmlFor="print-limit">Daily Limit</Label>
+              <select
+                id="print-limit"
+                value={limit === null ? "unlimited" : String(limit)}
+                disabled={!canEditLimits}
+                onChange={(e) => {
+                  if (!canEditLimits) {
+                    toast({ title: "You do not have permission to change limits.", tone: "error" });
+                    return;
+                  }
+                  setLimit(e.target.value === "unlimited" ? null : Number(e.target.value));
+                }}
+                className={cn(
+                  "rounded-2xl border border-navy-200 bg-white px-3.5 py-2.5 text-sm dark:border-navy-700 dark:bg-navy-900 text-navy-900 dark:text-navy-50",
+                  !canEditLimits && "opacity-60 cursor-not-allowed"
+                )}
+              >
+                <option value="unlimited">Unlimited</option>
+                <option value="10">10 prints</option>
+                <option value="50">50 prints</option>
+                <option value="100">100 prints</option>
+                <option value="200">200 prints</option>
+              </select>
+            </div>
+
+            {!canEditLimits && (
+              <div className="flex items-center gap-1.5 rounded-full bg-amber-500/10 border border-amber-500/20 px-3 py-2 text-xs font-semibold text-amber-700 dark:text-amber-300">
+                <ShieldAlert className="h-4 w-4" />
+                Only School Heads can change limits
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

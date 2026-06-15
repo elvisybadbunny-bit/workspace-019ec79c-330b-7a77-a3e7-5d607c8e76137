@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useToast } from "@/components/ui/toast";
+import { usePermissions } from "@/components/auth/permissions-provider";
 import { queuedPost } from "@/lib/offline/queue";
 import { useOnline } from "@/lib/offline/use-online";
 
@@ -45,7 +46,13 @@ function shiftDate(d: string, days: number): string {
   return t.toISOString().slice(0, 10);
 }
 
-export function AttendanceClient({ canRecord }: { canRecord: boolean }) {
+export function AttendanceClient({ canRecord: initialCanRecord }: { canRecord: boolean }) {
+  const { role, secondaryRole } = usePermissions();
+  const isMaster = role === "PRINCIPAL" || role === "SCHOOL_OWNER" || secondaryRole === "PRINCIPAL" || secondaryRole === "SCHOOL_OWNER";
+  const [masterOverride, setMasterOverride] = React.useState(false);
+
+  const canRecord = isMaster ? masterOverride : initialCanRecord;
+
   const [date, setDate] = React.useState(todayNairobi());
   const [classes, setClasses] = React.useState<OverviewClass[] | null>(null);
   const [error, setError] = React.useState(false);
@@ -79,7 +86,7 @@ export function AttendanceClient({ canRecord }: { canRecord: boolean }) {
   return (
     <div className="space-y-6">
       {/* date strip */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="inline-flex items-center gap-1 rounded-full border border-navy-200 p-1 dark:border-navy-700">
           <button onClick={() => setDate(shiftDate(date, -1))} className="rounded-full p-1.5 text-navy-500 hover:bg-navy-50 dark:hover:bg-navy-800" aria-label="Previous day"><ChevronLeft className="h-4 w-4" /></button>
           <span className="px-2 text-sm font-medium text-navy-900 dark:text-navy-50">
@@ -87,7 +94,20 @@ export function AttendanceClient({ canRecord }: { canRecord: boolean }) {
           </span>
           <button onClick={() => setDate(shiftDate(date, 1))} disabled={isToday} className="rounded-full p-1.5 text-navy-500 hover:bg-navy-50 disabled:opacity-30 dark:hover:bg-navy-800" aria-label="Next day"><ChevronRight className="h-4 w-4" /></button>
         </div>
-        {!isToday && <Button size="sm" variant="secondary" onClick={() => setDate(todayNairobi())}>Jump to today</Button>}
+        <div className="flex items-center gap-3">
+          {isMaster && (
+            <label className="inline-flex items-center gap-2 rounded-full border border-green-200/50 bg-green-500/10 px-3.5 py-1.5 text-xs font-semibold text-green-700 dark:border-green-500/25 dark:text-green-300 cursor-pointer hover:bg-green-500/20 transition-all select-none">
+              <input
+                type="checkbox"
+                checked={masterOverride}
+                onChange={(e) => setMasterOverride(e.target.checked)}
+                className="h-3.5 w-3.5 rounded border-green-300 text-green-600 focus:ring-green-500 cursor-pointer"
+              />
+              👑 Master Override: {masterOverride ? "ON" : "OFF"}
+            </label>
+          )}
+          {!isToday && <Button size="sm" variant="secondary" onClick={() => setDate(todayNairobi())}>Jump to today</Button>}
+        </div>
       </div>
 
       {error ? (

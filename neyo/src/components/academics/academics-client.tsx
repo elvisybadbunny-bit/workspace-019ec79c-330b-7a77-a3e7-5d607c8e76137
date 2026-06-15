@@ -9,7 +9,7 @@
 import * as React from "react";
 import {
   BookOpen, Building2, CalendarRange, Grid3X3, NotebookPen, Plus,
-  AlertCircle, Loader2, X, Sparkles, Trash2, Check,
+  AlertCircle, Loader2, X, Sparkles, Trash2, Check, Calendar,
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -20,12 +20,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { TableContainer, Table, THead, TBody, TR, TH, TD } from "@/components/ui/table";
 import { useToast } from "@/components/ui/toast";
+import { cn } from "@/lib/utils";
 
 interface Subject { id: string; name: string; code: string; curriculum: string; departmentId: string | null; departmentName: string | null; archived: boolean }
 interface Dept { id: string; name: string; hodId: string | null; hodName: string | null; subjectCount: number }
 interface Term { id: string; year: number; term: number; startDate: string; endDate: string; current: boolean }
 interface ClassOpt { id: string; name: string }
-interface Slot { id: string; dayOfWeek: number; period: number; subjectId: string; subjectName: string; subjectCode: string; teacherId: string | null; teacherName: string | null }
+interface Slot { id: string; dayOfWeek: number; period: number; subjectId: string; subjectName: string; subjectCode: string; teacherId: string | null; teacherName: string | null; weekRotation?: string }
 interface Plan { id: string; date: string; topic: string; status: string; subjectName: string; subjectCode: string; className: string; teacherName: string }
 interface Staff { id: string; fullName: string; role: string }
 
@@ -163,9 +164,12 @@ function SubjectDialog({ onClose, onDone }: { onClose: () => void; onDone: () =>
 function DepartmentsTab({ canManage }: { canManage: boolean }) {
   const { toast } = useToast();
   const [depts, setDepts] = React.useState<Dept[] | null>(null);
+  const [subjects, setSubjects] = React.useState<Subject[]>([]);
+  const [teachers, setTeachers] = React.useState<Staff[]>([]);
   const [error, setError] = React.useState(false);
   const [name, setName] = React.useState("");
   const [saving, setSaving] = React.useState(false);
+  const [editingDept, setEditingDept] = React.useState<Dept | null>(null);
 
   const load = React.useCallback(async () => {
     setError(false);
@@ -175,7 +179,18 @@ function DepartmentsTab({ canManage }: { canManage: boolean }) {
       if (json.ok) setDepts(json.data.departments); else setError(true);
     } catch { setError(true); }
   }, []);
-  React.useEffect(() => { load(); }, [load]);
+
+  React.useEffect(() => {
+    load();
+    fetch("/api/academics/subjects").then((r) => r.json()).then((j) => j.ok && setSubjects(j.data.subjects));
+    fetch("/api/conversations/recipients").then((r) => r.json()).then((j) => {
+      if (j.ok) {
+        setTeachers((j.data.recipients ?? []).filter((u: any) => 
+          ["TEACHER", "CLASS_TEACHER", "HOD", "DEPUTY_PRINCIPAL", "PRINCIPAL", "SCHOOL_OWNER"].includes(u.role)
+        ));
+      }
+    });
+  }, [load]);
 
   async function add() {
     setSaving(true);
@@ -195,7 +210,7 @@ function DepartmentsTab({ canManage }: { canManage: boolean }) {
       {canManage && (
         <div className="flex gap-2">
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Sciences" className="max-w-xs" />
-          <Button onClick={add} disabled={saving || name.trim().length < 2}><Plus className="h-4 w-4" /> Add</Button>
+          <Button onClick={add} disabled={saving || name.trim().length < 2}><Plus className="h-4 w-4" /> Add Department</Button>
         </div>
       )}
       {depts.length === 0 ? (
@@ -204,15 +219,111 @@ function DepartmentsTab({ canManage }: { canManage: boolean }) {
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {depts.map((d) => (
             <Card key={d.id}>
-              <CardContent className="p-4">
-                <p className="text-sm font-semibold text-navy-900 dark:text-navy-50">{d.name}</p>
-                <p className="mt-1 text-xs text-navy-400">{d.subjectCount} subject{d.subjectCount === 1 ? "" : "s"}{d.hodName ? ` · HOD: ${d.hodName}` : ""}</p>
+              <CardContent className="p-5 flex flex-col justify-between h-full gap-4">
+                <div className="min-w-0">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-bold text-navy-900 dark:text-navy-50">{d.name}</p>
+                    {d.name.toLowerCase().includes("co-curricular") && (
+                      <Badge tone="green">Non-Academic</Badge>
+                    )}
+                  </div>
+                  <p className="mt-1 text-xs text-navy-500 dark:text-navy-400">
+                    {d.subjectCount} subject{d.subjectCount === 1 ? "" : "s"}
+                    {d.hodName ? ` · HOD: ${d.hodName}` : " · No HOD Assigned"}
+                  </p>
+                </div>
+                {canManage && (
+                  <Button size="sm" variant="secondary" className="w-full" onClick={() => setEditingDept(d)}>
+                    Configure Department
+                  </Button>
+                )}
               </CardContent>
             </Card>
           ))}
         </div>
       )}
+
+      {editingDept && (
+        <EditDeptModal
+          dept={editingDept}
+          teachers={teachers}
+          subjects={subjects}
+          currentSubjectIds={subjects.filter((s) => s.departmentId === editingDept.id).map((s) => s.id)}
+          onClose={() => setEditingDept(null)}
+          onSaved={() => { setEditingDept(null); load(); toast({ title: "Department updated", tone: "success" }); }}
+        />
+      )}
     </div>
+  );
+}
+
+// ---- Department Config & Subject Mapping Modal --------------------------------------
+function EditDeptModal({ dept, teachers, subjects, currentSubjectIds, onClose, onSaved }: {
+  dept: Dept; teachers: Staff[]; subjects: Subject[]; currentSubjectIds: string[]; onClose: () => void; onSaved: () => void;
+}) {
+  const [name, setName] = React.useState(dept.name);
+  const [hodId, setHodId] = React.useState(dept.hodId ?? "");
+  const [selectedSubjectIds, setSelectedSubjectIds] = React.useState<Set<string>>(new Set(currentSubjectIds));
+  const [saving, setSaving] = React.useState(false);
+
+  function toggleSubject(sid: string) {
+    const next = new Set(selectedSubjectIds);
+    if (next.has(sid)) next.delete(sid); else next.add(sid);
+    setSelectedSubjectIds(next);
+  }
+
+  async function save() {
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/academics/departments?id=${dept.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: name.trim(),
+          hodId: hodId || null,
+          subjectIds: [...selectedSubjectIds],
+        }),
+      });
+      const json = await res.json();
+      if (json.ok) onSaved();
+    } finally { setSaving(false); }
+  }
+
+  return (
+    <Modal title={`Configure: ${dept.name}`} onClose={onClose} wide>
+      <div className="space-y-4">
+        <div>
+          <Label>Department Name</Label>
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Humanities" />
+        </div>
+
+        <div>
+          <Label>Appoint Department Head (HOD)</Label>
+          <select value={hodId} onChange={(e) => setHodId(e.target.value)}
+            className="mt-1.5 w-full rounded-2xl border border-navy-200 bg-white px-3.5 py-2.5 text-sm dark:border-navy-700 dark:bg-navy-900 text-navy-800 dark:text-navy-100">
+            <option value="">No HOD Appointed</option>
+            {teachers.map((t) => <option key={t.id} value={t.id}>{t.fullName}</option>)}
+          </select>
+        </div>
+
+        <div>
+          <Label>Map Subjects to this Department</Label>
+          <div className="mt-2 max-h-48 overflow-y-auto space-y-1.5 pr-1">
+            {subjects.map((s) => (
+              <label key={s.id} className="flex items-center gap-2.5 rounded-lg p-1.5 hover:bg-navy-50 text-xs text-navy-700 dark:text-navy-200 cursor-pointer">
+                <input type="checkbox" checked={selectedSubjectIds.has(s.id)} onChange={() => toggleSubject(s.id)} className="h-4 w-4 rounded border-navy-300 text-green-600 focus:ring-green-500" />
+                <span>{s.name} ({s.code})</span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 pt-2 border-t border-navy-100 dark:border-navy-800">
+          <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button onClick={save} disabled={saving}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Save Configuration</Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -310,6 +421,10 @@ function TimetableTab({ canManage }: { canManage: boolean }) {
   const [error, setError] = React.useState(false);
   const [cell, setCell] = React.useState<{ day: number; period: number } | null>(null);
   const [autoOpen, setAutoOpen] = React.useState(false);
+  const [showSaturday, setShowSaturday] = React.useState(true); // Default Saturday Enabled!
+  const [bulkSatOpen, setBulkSatOpen] = React.useState(false);
+
+  const daysList = showSaturday ? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] : ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
   React.useEffect(() => {
     fetch("/api/classes").then((r) => r.json()).then((j) => { if (j.ok) { setClasses(j.data.classes); if (j.data.classes[0]) setClassId(j.data.classes[0].id); } });
@@ -334,24 +449,74 @@ function TimetableTab({ canManage }: { canManage: boolean }) {
   const grid = new Map<string, Slot>();
   for (const s of slots ?? []) grid.set(`${s.dayOfWeek}|${s.period}`, s);
 
+  // Calculates the exact hours dynamically based on configured periods & breaks
+  function getPeriodTimeRange(p: number): string {
+    const startHour = 8; // School day starts at 08:00 AM
+    const startMin = 0;
+    const duration = config?.lessonDurationMins ?? 40;
+    const shortBreakStart = config?.shortBreakStart ?? 2;
+    const shortBreakMins = config?.shortBreakMins ?? 15;
+    const longBreakStart = config?.longBreakStart ?? 4;
+    const longBreakMins = config?.longBreakMins ?? 30;
+    const lunchStart = config?.lunchStart ?? 6;
+    const lunchMins = config?.lunchMins ?? 60;
+    
+    let totalMinutes = 0;
+    for (let i = 1; i < p; i++) {
+      totalMinutes += duration;
+      if (i === shortBreakStart) totalMinutes += shortBreakMins;
+      if (i === longBreakStart) totalMinutes += longBreakMins;
+      if (i === lunchStart) totalMinutes += lunchMins;
+    }
+    
+    const startTotal = startHour * 60 + startMin + totalMinutes;
+    const endTotal = startTotal + duration;
+    
+    const formatTime = (totalMins: number) => {
+      const h = Math.floor(totalMins / 60);
+      const m = totalMins % 60;
+      const periodLabel = h >= 12 ? "PM" : "AM";
+      const formattedHour = h > 12 ? h - 12 : h === 0 ? 12 : h;
+      return `${String(formattedHour).padStart(2, "0")}:${String(m).padStart(2, "0")} ${periodLabel}`;
+    };
+    
+    return `${formatTime(startTotal)} - ${formatTime(endTotal)}`;
+  }
+
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <select value={classId} onChange={(e) => setClassId(e.target.value)} className="rounded-full border border-navy-200 bg-white px-3 py-2 text-sm dark:border-navy-700 dark:bg-navy-900">
-          {classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-        {canManage && classId && (
-          <Button variant="secondary" onClick={() => setAutoOpen(true)}><Sparkles className="h-4 w-4" /> Auto-fill week</Button>
-        )}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <select value={classId} onChange={(e) => setClassId(e.target.value)} className="rounded-full border border-navy-200 bg-white px-3 py-2 text-sm dark:border-navy-700 dark:bg-navy-900">
+            {classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          {canManage && classId && (
+            <>
+              <Button variant="secondary" onClick={() => setAutoOpen(true)}><Sparkles className="h-4 w-4" /> Auto-fill week</Button>
+              <Button variant="secondary" onClick={() => setBulkSatOpen(true)}><Calendar className="h-4 w-4 text-green-600" /> Bulk Saturday Scheduler</Button>
+            </>
+          )}
+        </div>
+
+        {/* Saturday Timetable toggle */}
+        <label className="inline-flex items-center gap-2 rounded-full border border-navy-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-navy-700 dark:border-navy-700 dark:bg-navy-900 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={showSaturday}
+            onChange={(e) => setShowSaturday(e.target.checked)}
+            className="h-3.5 w-3.5 rounded border-navy-300 text-green-600 focus:ring-green-500"
+          />
+          Include Saturday Timetable
+        </label>
       </div>
 
       {error ? <LoadError onRetry={load} /> : slots === null ? <Skeletons /> : (
         <div className="overflow-x-auto rounded-2xl border border-navy-100 dark:border-navy-800">
-          <table className="w-full min-w-[640px] border-collapse bg-white text-xs dark:bg-navy-900">
+          <table className="w-full min-w-[720px] border-collapse bg-white text-xs dark:bg-navy-900">
             <thead>
               <tr className="bg-warm-50 dark:bg-navy-800">
-                <th className="w-14 border-b border-navy-100 p-2 text-left font-semibold text-navy-400 dark:border-navy-800">#</th>
-                {DAY_NAMES.map((d) => <th key={d} className="border-b border-navy-100 p-2 text-left font-semibold text-navy-600 dark:border-navy-800 dark:text-navy-300">{d}</th>)}
+                <th className="w-28 border-b border-navy-100 p-2.5 text-left font-semibold text-navy-400 dark:border-navy-800">Lesson Period</th>
+                {daysList.map((d) => <th key={d} className="border-b border-navy-100 p-2.5 text-left font-semibold text-navy-600 dark:border-navy-800 dark:text-navy-300">{d}</th>)}
               </tr>
             </thead>
             <tbody>
@@ -361,19 +526,23 @@ function TimetableTab({ canManage }: { canManage: boolean }) {
                 // Render standard period row
                 rows.push(
                   <tr key={p}>
-                    <td className="border-b border-navy-50 p-2 font-mono text-navy-400 dark:border-navy-800">P{p}</td>
-                    {[1, 2, 3, 4, 5].map((d) => {
+                    <td className="border-b border-navy-50 p-2.5 font-mono text-navy-500 dark:border-navy-800 text-[10px] leading-tight">
+                      <span className="font-bold text-navy-700 dark:text-navy-300">Period {p}</span>
+                      <span className="block font-sans text-navy-400 dark:text-navy-500 font-normal mt-0.5">{getPeriodTimeRange(p)}</span>
+                    </td>
+                    {Array.from({ length: daysList.length }, (_, dIdx) => {
+                      const d = dIdx + 1;
                       const s = grid.get(`${d}|${p}`);
                       const isLunch = s?.subjectCode === "LUNCH";
                       const isFree = s?.subjectCode === "FREE";
                       const cellBg = isLunch
-                        ? "bg-red-50 hover:bg-red-100 dark:bg-red-950/20"
+                        ? "bg-red-50/40 hover:bg-red-100/50 dark:bg-red-950/20"
                         : isFree
-                        ? "bg-navy-50 hover:bg-navy-100/50 dark:bg-navy-900/10"
+                        ? "bg-navy-50/40 hover:bg-navy-100/30 dark:bg-navy-900/10"
                         : s
-                        ? "bg-green-50 hover:bg-green-100 dark:bg-green-900/20"
+                        ? "bg-green-50/50 hover:bg-green-100/50 dark:bg-green-900/20"
                         : canManage
-                        ? "hover:bg-navy-50 dark:hover:bg-navy-800"
+                        ? "hover:bg-navy-50/50 dark:hover:bg-navy-800/30"
                         : "";
 
                       return (
@@ -390,7 +559,14 @@ function TimetableTab({ canManage }: { canManage: boolean }) {
                                 <span className="font-medium text-navy-400 dark:text-navy-500 italic">Free Study</span>
                               ) : (
                                 <>
-                                  <span className="font-semibold text-navy-900 dark:text-navy-50">{s.subjectCode}</span>
+                                  <div className="flex items-center justify-between gap-1">
+                                    <span className="font-semibold text-navy-900 dark:text-navy-50">{s.subjectCode}</span>
+                                    {s.weekRotation && s.weekRotation !== "ALL" && (
+                                      <span className="inline-block rounded bg-green-500/15 border border-green-500/25 px-1 py-0 text-[8px] font-bold text-green-700 dark:text-green-400 shrink-0">
+                                        {s.weekRotation === "WEEK_A" ? "Week A" : "Week B"}
+                                      </span>
+                                    )}
+                                  </div>
                                   {s.teacherName && <span className="block truncate text-[10px] text-navy-400">{s.teacherName}</span>}
                                 </>
                               )
@@ -407,9 +583,9 @@ function TimetableTab({ canManage }: { canManage: boolean }) {
                 // Check for dynamic short break
                 if (config && p === config.shortBreakStart) {
                   rows.push(
-                    <tr key={`short-break-${p}`} className="bg-amber-500/10 text-center font-bold text-amber-700 dark:bg-amber-950/20 dark:text-amber-300">
-                      <td className="p-2 border-b border-navy-50 font-mono text-navy-400">BREAK</td>
-                      <td colSpan={5} className="p-2 border-b border-l border-navy-50 text-xs">
+                    <tr key={`short-break-${p}`} className="bg-amber-500/5 text-center font-bold text-amber-700 dark:bg-amber-950/20 dark:text-amber-300">
+                      <td className="p-2 border-b border-navy-50 font-mono text-navy-500 text-[10px]">BREAK</td>
+                      <td colSpan={daysList.length} className="p-2 border-b border-l border-navy-50 text-xs">
                         Short Break ({config.shortBreakMins} mins)
                       </td>
                     </tr>
@@ -419,9 +595,9 @@ function TimetableTab({ canManage }: { canManage: boolean }) {
                 // Check for dynamic long break
                 if (config && p === config.longBreakStart) {
                   rows.push(
-                    <tr key={`long-break-${p}`} className="bg-amber-500/10 text-center font-bold text-amber-700 dark:bg-amber-950/20 dark:text-amber-300">
-                      <td className="p-2 border-b border-navy-50 font-mono text-navy-400">BREAK</td>
-                      <td colSpan={5} className="p-2 border-b border-l border-navy-50 text-xs">
+                    <tr key={`long-break-${p}`} className="bg-amber-500/5 text-center font-bold text-amber-700 dark:bg-amber-950/20 dark:text-amber-300">
+                      <td className="p-2 border-b border-navy-50 font-mono text-navy-500 text-[10px]">BREAK</td>
+                      <td colSpan={daysList.length} className="p-2 border-b border-l border-navy-50 text-xs">
                         Long Break ({config.longBreakMins} mins)
                       </td>
                     </tr>
@@ -440,6 +616,7 @@ function TimetableTab({ canManage }: { canManage: boolean }) {
           classId={classId} day={cell.day} period={cell.period}
           existing={grid.get(`${cell.day}|${cell.period}`) ?? null}
           subjects={subjects.filter((s) => !s.archived)} staff={staff}
+          showSaturday={showSaturday}
           onClose={() => setCell(null)}
           onDone={() => { setCell(null); load(); }}
         />
@@ -449,13 +626,22 @@ function TimetableTab({ canManage }: { canManage: boolean }) {
           onClose={() => setAutoOpen(false)}
           onDone={(msg) => { setAutoOpen(false); toast({ title: msg, tone: "success" }); load(); }} />
       )}
+      {bulkSatOpen && (
+        <BulkSaturdayModal
+          classes={classes}
+          subjects={subjects.filter((s) => !s.archived)}
+          staff={staff}
+          onClose={() => setBulkSatOpen(false)}
+          onDone={(msg) => { setBulkSatOpen(false); toast({ title: msg, tone: "success" }); load(); }}
+        />
+      )}
     </div>
   );
 }
 
-function SlotDialog({ classId, day, period, existing, subjects, staff, onClose, onDone }: {
+function SlotDialog({ classId, day, period, existing, subjects, staff, showSaturday, onClose, onDone }: {
   classId: string; day: number; period: number; existing: Slot | null;
-  subjects: Subject[]; staff: Staff[]; onClose: () => void; onDone: () => void;
+  subjects: Subject[]; staff: Staff[]; showSaturday: boolean; onClose: () => void; onDone: () => void;
 }) {
   const { toast } = useToast();
   const [subjectId, setSubjectId] = React.useState(existing?.subjectId ?? "");
@@ -482,8 +668,10 @@ function SlotDialog({ classId, day, period, existing, subjects, staff, onClose, 
     } finally { setSaving(false); }
   }
 
+  const dayLabel = showSaturday && day === 6 ? "Saturday" : DAY_NAMES[day - 1];
+
   return (
-    <Modal title={`${DAY_NAMES[day - 1]} · Period ${period}`} onClose={onClose}>
+    <Modal title={`${dayLabel} · Period ${period}`} onClose={onClose}>
       <div className="space-y-3">
         <div>
           <Label>Subject</Label>
@@ -1020,6 +1208,7 @@ function ClassConfigModal({ classId, currentConfig, onClose, onSaved }: {
     hasRemedials: currentConfig?.hasRemedials ?? false,
     hasPreps: currentConfig?.hasPreps ?? false,
     lunchShift: currentConfig?.lunchShift ?? 1,
+    hasSaturday: currentConfig?.hasSaturday ?? true, // Added for Saturday attendance control
   });
 
   const set = (k: string, v: any) => setF((p) => ({ ...p, [k]: v }));
@@ -1075,6 +1264,10 @@ function ClassConfigModal({ classId, currentConfig, onClose, onSaved }: {
             <label className="flex items-center gap-2 text-sm text-navy-600 dark:text-navy-300 select-none cursor-pointer">
               <input type="checkbox" checked={f.hasPreps} onChange={(e) => set("hasPreps", e.target.checked)} className="h-4 w-4 rounded border-navy-300 text-green-600" />
               <span>Participates in Preps</span>
+            </label>
+            <label className="flex items-center gap-2 text-sm text-navy-600 dark:text-navy-300 select-none cursor-pointer">
+              <input type="checkbox" checked={f.hasSaturday} onChange={(e) => set("hasSaturday", e.target.checked)} className="h-4 w-4 rounded border-navy-300 text-green-600" />
+              <span>Attends Saturday Remedials</span>
             </label>
           </div>
         </div>
@@ -1132,6 +1325,214 @@ function ClassConfigModal({ classId, currentConfig, onClose, onSaved }: {
       <div className="flex justify-end gap-2">
         <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
         <Button onClick={save} disabled={saving}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save Config"}</Button>
+      </div>
+    </Modal>
+  );
+}
+
+// ---- Bulk Saturday Timetable Scheduler (Chunk C — Part 3) ---------------------------
+function BulkSaturdayModal({
+  classes,
+  subjects,
+  staff,
+  onClose,
+  onDone,
+}: {
+  classes: ClassOpt[];
+  subjects: Subject[];
+  staff: Staff[];
+  onClose: () => void;
+  onDone: (msg: string) => void;
+}) {
+  const { toast } = useToast();
+  const [selectedClassIds, setSelectedClassIds] = React.useState<Set<string>>(new Set());
+  const [selectedPeriods, setSelectedPeriods] = React.useState<Set<number>>(new Set());
+  const [subjectId, setSubjectId] = React.useState("");
+  const [teacherId, setTeacherId] = React.useState("");
+  const [weekRotation, setWeekRotation] = React.useState("ALL"); // ALL | WEEK_A | WEEK_B
+  const [configs, setConfigs] = React.useState<any[]>([]); // Loaded internally to prevent prop drilling
+  const [saving, setSaving] = React.useState(false);
+
+  React.useEffect(() => {
+    fetch("/api/academics/timetable/generator")
+      .then((r) => r.json())
+      .then((j) => {
+        if (j.ok) {
+          setConfigs(j.data.configs ?? []);
+        }
+      });
+  }, []);
+
+  // Filter out classes configured to NOT attend Saturdays (H.2)
+  const activeClasses = classes.filter((c) => {
+    const cfg = configs.find((x) => x.classId === c.id);
+    return cfg ? cfg.hasSaturday !== false : true;
+  });
+
+  function toggleClass(id: string) {
+    const next = new Set(selectedClassIds);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    setSelectedClassIds(next);
+  }
+
+  function togglePeriod(p: number) {
+    const next = new Set(selectedPeriods);
+    if (next.has(p)) next.delete(p); else next.add(p);
+    setSelectedPeriods(next);
+  }
+
+  // Quick Select Helpers
+  function selectGrade6to9() {
+    const targetIds = activeClasses
+      .filter((c) => {
+        const num = parseInt(c.name.match(/\d+/)?.[0] ?? "");
+        return c.name.toLowerCase().includes("grade") && num >= 6 && num <= 9;
+      })
+      .map((c) => c.id);
+    setSelectedClassIds(new Set(targetIds.length > 0 ? targetIds : activeClasses.map((c) => c.id)));
+  }
+
+  function selectForm1to4() {
+    const targetIds = activeClasses
+      .filter((c) => c.name.toLowerCase().includes("form"))
+      .map((c) => c.id);
+    setSelectedClassIds(new Set(targetIds.length > 0 ? targetIds : activeClasses.map((c) => c.id)));
+  }
+
+  function selectAllClasses() {
+    setSelectedClassIds(new Set(activeClasses.map((c) => c.id)));
+  }
+
+  async function handleBulkSchedule() {
+    if (selectedClassIds.size === 0) {
+      toast({ title: "Select at least one class.", tone: "error" });
+      return;
+    }
+    if (selectedPeriods.size === 0) {
+      toast({ title: "Select at least one lesson period.", tone: "error" });
+      return;
+    }
+    if (!subjectId) {
+      toast({ title: "Select a subject.", tone: "error" });
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const res = await fetch("/api/academics/timetable", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "bulkSaturday",
+          classIds: [...selectedClassIds],
+          periodIds: [...selectedPeriods],
+          subjectId,
+          teacherId: teacherId || null,
+          weekRotation,
+        }),
+      });
+      const json = await res.json();
+      if (json.ok) {
+        onDone(`Successfully scheduled Saturday (${weekRotation === "ALL" ? "Weekly" : `Alternating ${weekRotation}`}) for ${selectedClassIds.size} classes!`);
+      } else {
+        toast({ title: json.error?.message || "Bulk scheduling failed.", tone: "error" });
+      }
+    } catch {
+      toast({ title: "Failed to connect to bulk scheduler.", tone: "error" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal title="Bulk Saturday Scheduler (Preps / Remedials)" onClose={onClose} wide>
+      <div className="space-y-4 max-h-[85vh] overflow-y-auto pr-1">
+        <p className="text-xs text-navy-400">
+          Schedule Saturday exam prep, study halls, or remedials for multiple classes simultaneously in one single tap!
+        </p>
+
+        {/* 1) Class Selection */}
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Label>Select Target Classes ({selectedClassIds.size})</Label>
+            <div className="flex gap-1">
+              <button onClick={selectGrade6to9} className="rounded bg-navy-50 hover:bg-navy-100 text-[10px] font-semibold text-navy-600 px-2 py-1 dark:bg-navy-800 dark:text-navy-300">Grade 6-9</button>
+              <button onClick={selectForm1to4} className="rounded bg-navy-50 hover:bg-navy-100 text-[10px] font-semibold text-navy-600 px-2 py-1 dark:bg-navy-800 dark:text-navy-300">Form 1-4</button>
+              <button onClick={selectAllClasses} className="rounded bg-navy-50 hover:bg-navy-100 text-[10px] font-semibold text-navy-600 px-2 py-1 dark:bg-navy-800 dark:text-navy-300">All</button>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-2 border border-navy-100 dark:border-navy-800 bg-warm-50/50 p-3 rounded-2xl max-h-32 overflow-y-auto">
+            {activeClasses.map((c) => (
+              <label key={c.id} className="flex items-center gap-1.5 text-xs text-navy-700 dark:text-navy-200 cursor-pointer">
+                <input type="checkbox" checked={selectedClassIds.has(c.id)} onChange={() => toggleClass(c.id)} className="h-3.5 w-3.5 rounded border-navy-300 text-green-600 focus:ring-green-500" />
+                <span className="truncate">{c.name}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {/* 2) Period Selection */}
+        <div className="space-y-2">
+          <Label>Select Saturday Lesson Periods ({selectedPeriods.size})</Label>
+          <div className="grid grid-cols-4 gap-2">
+            {[1, 2, 3, 4, 5, 6, 7, 8].map((p) => {
+              const selected = selectedPeriods.has(p);
+              return (
+                <button
+                  key={p}
+                  onClick={() => togglePeriod(p)}
+                  className={cn(
+                    "rounded-xl border p-2 text-center text-xs font-semibold transition-all select-none",
+                    selected
+                      ? "bg-green-600 border-green-500 text-white shadow-sm"
+                      : "bg-white border-navy-100 text-navy-600 dark:bg-navy-900 dark:border-navy-800 dark:text-navy-300 hover:bg-navy-50"
+                  )}
+                >
+                  Period {p}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* 3) Subject, Teacher, and Alternating Week Rotation */}
+        <div className="grid grid-cols-3 gap-3">
+          <div>
+            <Label>Subject</Label>
+            <select value={subjectId} onChange={(e) => setSubjectId(e.target.value)}
+              className="mt-1.5 w-full rounded-2xl border border-navy-200 bg-white px-3 py-2.5 text-xs dark:border-navy-700 dark:bg-navy-900 text-navy-800 dark:text-navy-100">
+              <option value="">Select subject…</option>
+              {subjects.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.code})</option>)}
+            </select>
+          </div>
+          <div>
+            <Label>Teacher (optional)</Label>
+            <select value={teacherId} onChange={(e) => setTeacherId(e.target.value)}
+              className="mt-1.5 w-full rounded-2xl border border-navy-200 bg-white px-3 py-2.5 text-xs dark:border-navy-700 dark:bg-navy-900 text-navy-800 dark:text-navy-100">
+              <option value="">No Teacher</option>
+              {staff.map((t) => <option key={t.id} value={t.id}>{t.fullName}</option>)}
+            </select>
+          </div>
+          <div>
+            <Label>Rotation / Alternating</Label>
+            <select value={weekRotation} onChange={(e) => setWeekRotation(e.target.value)}
+              className="mt-1.5 w-full rounded-2xl border border-navy-200 bg-white px-3 py-2.5 text-xs dark:border-navy-700 dark:bg-navy-900 text-navy-800 dark:text-navy-100">
+              <option value="ALL">Every Saturday</option>
+              <option value="WEEK_A">Week A Only (Odd)</option>
+              <option value="WEEK_B">Week B Only (Even)</option>
+            </select>
+          </div>
+        </div>
+
+        {/* 4) Save Actions */}
+        <div className="flex justify-end gap-2 pt-2 border-t border-navy-100 dark:border-navy-800">
+          <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button onClick={handleBulkSchedule} disabled={saving || selectedClassIds.size === 0 || selectedPeriods.size === 0 || !subjectId} className="px-6">
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+            Schedule Saturday ({selectedClassIds.size * selectedPeriods.size} Slots)
+          </Button>
+        </div>
+
       </div>
     </Modal>
   );

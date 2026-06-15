@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { ToastProvider } from "@/components/ui/toast";
+import { BiometricGateProvider } from "@/components/auth/biometric-gate";
 import { CookieConsent } from "@/components/legal/cookie-consent";
 
 const inter = Inter({
@@ -59,8 +60,10 @@ export default function RootLayout({
       </head>
       <body className={inter.variable}>
         <ToastProvider>
-          {children}
-          <CookieConsent />
+          <BiometricGateProvider>
+            {children}
+            <CookieConsent />
+          </BiometricGateProvider>
         </ToastProvider>
       </body>
     </html>

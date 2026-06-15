@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import {
   Plus, Search, LayoutGrid, List as ListIcon, Loader2, AlertCircle,
-  GraduationCap, Users, UserCheck, X,
+  GraduationCap, Users, UserCheck, X, Printer,
 } from "lucide-react";
 import { StatCard } from "@/components/ui/stat-card";
 import { Button } from "@/components/ui/button";
@@ -199,8 +199,9 @@ export function StudentsClient({ canCreate }: { canCreate: boolean }) {
   );
 
   return (
-    <div className="space-y-6">
-      {/* stats */}
+    <>
+      <div className="space-y-6 print:hidden">
+        {/* stats */}
       <div className="grid grid-cols-3 gap-4">
         {stats === null ? (
           [0,1,2].map((i)=><Skeleton key={i} className="h-24 rounded-2xl" />)
@@ -242,6 +243,11 @@ export function StudentsClient({ canCreate }: { canCreate: boolean }) {
             <button onClick={()=>setView("kanban")} className={"rounded-full p-1.5 "+(view==="kanban"?"bg-navy-900 text-white dark:bg-navy-50 dark:text-navy-900":"text-navy-400")} aria-label="Kanban view"><LayoutGrid className="h-4 w-4" /></button>
           </div>
           {canCreate && <Button onClick={()=>setDialog(true)}><Plus className="h-4 w-4" /> New student</Button>}
+          {students && students.length > 0 && (
+            <Button variant="secondary" onClick={() => window.print()}>
+              <Printer className="h-4 w-4 text-green-600" /> Print Class List
+            </Button>
+          )}
         </div>
       </div>
 
@@ -407,7 +413,53 @@ export function StudentsClient({ canCreate }: { canCreate: boolean }) {
       )}
 
       {dialog && <NewStudentDialog classes={classes} onClose={()=>setDialog(false)} onSaved={(adm)=>{ setDialog(false); toast({title:`Student registered · ${adm}`, tone:"success"}); load(); }} />}
-    </div>
+      </div>
+
+      {/* Print-only Class List Table (H.3) */}
+      {students && (
+        <div className="hidden print:block w-full text-black p-4 bg-white">
+          <div className="mb-6 flex items-start justify-between border-b-2 border-black pb-3">
+            <div>
+              <h1 className="text-xl font-bold uppercase tracking-wider">
+                {classes.find((c) => c.id === classId)?.name || "Karibu High School"} - Class List
+              </h1>
+              <p className="text-xs text-gray-500 mt-1">Generated on: {new Date().toLocaleDateString("en-KE")}</p>
+            </div>
+            <div className="text-right">
+              <p className="text-sm font-semibold">Total Learners: {students.length}</p>
+              <p className="text-xs text-gray-500">NEYO School OS</p>
+            </div>
+          </div>
+          
+          <table className="w-full border-collapse border border-gray-300 text-xs">
+            <thead>
+              <tr className="bg-gray-100">
+                <th className="border border-gray-300 p-2 text-left w-10">#</th>
+                <th className="border border-gray-300 p-2 text-left w-24">Adm. No.</th>
+                <th className="border border-gray-300 p-2 text-left">Student Name</th>
+                <th className="border border-gray-300 p-2 text-left w-16">Gender</th>
+                <th className="border border-gray-300 p-2 text-left w-20">Status</th>
+                <th className="border border-gray-300 p-2 text-left w-36">Signature / Remarks</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...students]
+                .sort((a, b) => a.admissionNo.localeCompare(b.admissionNo))
+                .map((s, idx) => (
+                  <tr key={s.id}>
+                    <td className="border border-gray-300 p-2 font-medium">{idx + 1}</td>
+                    <td className="border border-gray-300 p-2 font-mono">{s.admissionNo}</td>
+                    <td className="border border-gray-300 p-2 font-medium">{s.name}</td>
+                    <td className="border border-gray-300 p-2">{s.gender === "M" ? "Boy" : "Girl"}</td>
+                    <td className="border border-gray-300 p-2 text-xs capitalize">{s.status.toLowerCase()}</td>
+                    <td className="border border-gray-300 p-2"></td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
   );
 }
 

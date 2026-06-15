@@ -26,7 +26,11 @@ export async function requirePagePermission(
   ...needed: Permission[]
 ): Promise<SessionUser> {
   const user = await requirePageUser();
-  const ok = needed.every((p) => can(user.role, p));
+  const ok = needed.every((p) => {
+    const hasPrimary = can(user.role, p);
+    const hasSecondary = user.secondaryRole ? can(user.secondaryRole, p) : false;
+    return hasPrimary || hasSecondary;
+  });
   if (!ok) redirect("/forbidden");
   return user;
 }
@@ -34,7 +38,9 @@ export async function requirePagePermission(
 /** Require one of the given roles, else redirect to /forbidden. */
 export async function requirePageRole(...allowed: Role[]): Promise<SessionUser> {
   const user = await requirePageUser();
-  if (allowed.length > 0 && !allowed.includes(user.role)) {
+  const hasPrimary = allowed.includes(user.role);
+  const hasSecondary = user.secondaryRole ? allowed.includes(user.secondaryRole) : false;
+  if (allowed.length > 0 && !hasPrimary && !hasSecondary) {
     redirect("/forbidden");
   }
   return user;

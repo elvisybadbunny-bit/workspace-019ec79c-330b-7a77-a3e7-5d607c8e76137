@@ -17,7 +17,7 @@ import {
   // hook inside this async handler. Same function, lint-safe name.
   useGatePass as markGatePassUsed,
   addPickupPerson, removePickupPerson, pickupListFor,
-  raisePanic, resolvePanic, listPanics,
+  raisePanic, resolvePanic, listPanics, confirmPickupPerson,
 } from "@/lib/services/security.service";
 
 export const dynamic = "force-dynamic";
@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
     const action = z
-      .object({ action: z.enum(["gatePass", "usePass", "cancelPass", "addPickup", "removePickup", "panic", "resolvePanic"]) })
+      .object({ action: z.enum(["gatePass", "usePass", "cancelPass", "addPickup", "removePickup", "panic", "resolvePanic", "confirmPickup"]) })
       .parse(body).action;
 
     // PANIC: any staff with panic.raise — separate gate from security.manage.
@@ -85,6 +85,10 @@ export async function POST(req: NextRequest) {
     if (action === "removePickup") {
       const { personId } = z.object({ personId: z.string().min(1) }).parse(body);
       return ok(await removePickupPerson(user, personId));
+    }
+    if (action === "confirmPickup") {
+      const { studentId, personId } = z.object({ studentId: z.string().min(1), personId: z.string().min(1) }).parse(body);
+      return ok(await confirmPickupPerson(user, studentId, personId));
     }
     const { alertId } = z.object({ alertId: z.string().min(1) }).parse(body);
     return ok(await resolvePanic(user, alertId));

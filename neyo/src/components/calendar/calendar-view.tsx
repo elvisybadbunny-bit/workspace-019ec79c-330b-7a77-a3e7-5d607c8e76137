@@ -300,19 +300,23 @@ function MonthGrid({
             <div
               key={i}
               className={
-                "min-h-[7rem] border-b border-r border-navy-100 p-2 transition-all duration-200 ease-apple dark:border-navy-800 " +
+                "min-h-[8.5rem] border-b border-r border-navy-100 p-2.5 transition-all duration-200 ease-apple dark:border-navy-800 relative " +
                 cellBgClass
               }
             >
-              <div className="mb-1.5 flex justify-end">
+              {/* Enlarged and distinct date header to prevent drifting or hiding */}
+              <div className="mb-2 flex items-center justify-between border-b border-navy-100/30 pb-1">
+                <span className="text-[10px] uppercase font-bold text-navy-400 tracking-wider">
+                  {items.length > 0 ? `${items.length} Event${items.length === 1 ? "" : "s"}` : ""}
+                </span>
                 <span
                   className={
-                    "inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium " +
+                    "inline-flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold shadow-sm " +
                     (isToday
-                      ? "bg-green-600 font-semibold text-white"
+                      ? "bg-green-600 font-bold text-white ring-2 ring-green-500/20"
                       : inMonth
-                      ? "text-navy-700 dark:text-navy-200"
-                      : "text-navy-300 dark:text-navy-600")
+                      ? "text-navy-800 font-bold dark:text-navy-100 bg-navy-50/50 dark:bg-navy-800/40"
+                      : "text-navy-300 dark:text-navy-600 font-medium")
                   }
                 >
                   {d.getDate()}
@@ -332,7 +336,7 @@ function MonthGrid({
                   </div>
                 ))}
                 {items.length > 3 && (
-                  <div className="px-2 text-xs font-medium text-navy-500 dark:text-navy-400">
+                  <div className="px-2 text-xs font-semibold text-green-600 dark:text-green-400">
                     +{items.length - 3} more
                   </div>
                 )}

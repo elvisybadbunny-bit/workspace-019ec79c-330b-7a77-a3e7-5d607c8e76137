@@ -22,6 +22,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FileUpload, type UploadedFile } from "@/components/ui/file-upload";
 import { useToast } from "@/components/ui/toast";
+import { useBiometricGate } from "@/components/auth/biometric-gate";
 
 const kes = (n: number) => `KES ${n.toLocaleString("en-KE")}`;
 
@@ -209,6 +210,7 @@ function AddBookDialog({ onClose, onDone }: { onClose: () => void; onDone: () =>
 
 function OutTab({ canManage }: { canManage: boolean }) {
   const { toast } = useToast();
+  const { requireBiometric } = useBiometricGate();
   const [issues, setIssues] = React.useState<OpenIssue[] | null>(null);
   const [fines, setFines] = React.useState<Fine[] | null>(null);
   const [error, setError] = React.useState(false);
@@ -228,23 +230,26 @@ function OutTab({ canManage }: { canManage: boolean }) {
   React.useEffect(() => { load(); }, [load]);
 
   async function doReturn(issue: OpenIssue) {
-    setBusy(issue.id);
-    try {
-      const res = await fetch("/api/library", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "return", issueId: issue.id, finePaid: false }),
-      });
-      const json = await res.json();
-      if (json.ok) {
-        toast({
-          title: json.data.fineKes > 0
-            ? `Returned — fine ${kes(json.data.fineKes)} (${json.data.daysOverdue} days late)`
-            : "Returned on time ✓",
-          tone: json.data.fineKes > 0 ? "error" : "success",
+    // Gate the clearing of active book issues behind a Face ID / Fingerprint verification check!
+    requireBiometric(`Clear book check-out: "${issue.bookTitle}"`, async () => {
+      setBusy(issue.id);
+      try {
+        const res = await fetch("/api/library", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "return", issueId: issue.id, finePaid: false }),
         });
-        load();
-      } else toast({ title: json.error?.message || "Could not return", tone: "error" });
-    } finally { setBusy(null); }
+        const json = await res.json();
+        if (json.ok) {
+          toast({
+            title: json.data.fineKes > 0
+              ? `Returned — fine ${kes(json.data.fineKes)} (${json.data.daysOverdue} days late)`
+              : "Returned on time ✓",
+            tone: json.data.fineKes > 0 ? "error" : "success",
+          });
+          load();
+        } else toast({ title: json.error?.message || "Could not return", tone: "error" });
+      } finally { setBusy(null); }
+    });
   }
 
   async function payFine(id: string) {
@@ -347,25 +352,58 @@ function IssueTab({ onIssued }: { onIssued: () => void }) {
   const [hit, setHit] = React.useState<BarcodeHit | null>(null);
   const [books, setBooks] = React.useState<Book[]>([]);
   const [bookId, setBookId] = React.useState("");
+  const [bookQuery, setBookQuery] = React.useState("");
+  const [showBookHits, setShowBookHits] = React.useState(false);
+
   const [students, setStudents] = React.useState<StudentOpt[]>([]);
+  const [staff, setStaff] = React.useState<StudentOpt[]>([]);
   const [studentId, setStudentId] = React.useState("");
+  const [borrowerQuery, setBorrowerQuery] = React.useState("");
+  const [showBorrowerHits, setShowBorrowerHits] = React.useState(false);
+
   const [dueDate, setDueDate] = React.useState(() => new Date(Date.now() + 3 * 3600_000 + 14 * 24 * 3600_000).toISOString().slice(0, 10));
   const [busy, setBusy] = React.useState(false);
 
   React.useEffect(() => {
     fetch("/api/library").then((r) => r.json()).then((j) => j.ok && setBooks(j.data.books)).catch(() => {});
+    
+    // Load students
     fetch("/api/students?status=ACTIVE").then((r) => r.json()).then((j) => {
       if (j.ok) setStudents(j.data.students.map((s: { id: string; firstName: string; middleName?: string | null; lastName: string; admissionNo: string }) => ({
         id: s.id, name: [s.firstName, s.middleName, s.lastName].filter(Boolean).join(" "), admissionNo: s.admissionNo,
       })));
     }).catch(() => {});
+
+    // Load active staff for Teacher Borrowing eligibility (H.3)
+    fetch("/api/conversations/recipients").then((r) => r.json()).then((j) => {
+      if (j.ok) setStaff(j.data.recipients.map((r: any) => ({
+        id: r.id, name: `${r.fullName} (Staff · ${r.roleLabel})`, admissionNo: "Staff",
+      })));
+    }).catch(() => {});
   }, []);
+
+  const borrowers = [...students, ...staff];
+
+  // Filtering lists for dropdown-free search
+  const matchedBooks = books.filter((b) => 
+    b.title.toLowerCase().includes(bookQuery.toLowerCase()) || 
+    (b.isbn && b.isbn.toLowerCase().includes(bookQuery.toLowerCase()))
+  );
+
+  const matchedBorrowers = borrowers.filter((s) => 
+    s.name.toLowerCase().includes(borrowerQuery.toLowerCase()) || 
+    s.admissionNo.toLowerCase().includes(borrowerQuery.toLowerCase())
+  );
 
   async function scan() {
     if (!barcode.trim()) return;
     const res = await fetch(`/api/library?barcode=${encodeURIComponent(barcode.trim())}`);
     const json = await res.json();
-    if (json.ok) { setHit(json.data); setBookId(json.data.id); }
+    if (json.ok) { 
+      setHit(json.data); 
+      setBookId(json.data.id); 
+      setBookQuery(json.data.title);
+    }
     else { setHit(null); toast({ title: json.error?.message || "Not found", tone: "error" }); }
   }
 
@@ -377,15 +415,13 @@ function IssueTab({ onIssued }: { onIssued: () => void }) {
         body: JSON.stringify({ action: "issue", bookId, studentId, dueDate }),
       });
       const json = await res.json();
-      if (json.ok) { toast({ title: "Book issued ✓", tone: "success" }); onIssued(); }
-      else toast({ title: json.error?.message || "Could not issue", tone: "error" });
+      if (json.ok) { toast({ title: "Book issued successfully!", tone: "success" }); onIssued(); }
+      else toast({ title: json.error?.message || "Could not issue book", tone: "error" });
     } finally { setBusy(false); }
   }
 
-  const select = "w-full rounded-2xl border border-navy-200 bg-white px-3.5 py-2.5 text-sm dark:border-navy-700 dark:bg-navy-900";
-
   return (
-    <Card className="max-w-xl">
+    <Card className="max-w-xl relative">
       <CardHeader><CardTitle className="flex items-center gap-2"><BookUp className="h-4 w-4 text-green-600" /> Issue a book</CardTitle></CardHeader>
       <CardContent className="space-y-4">
         <div>
@@ -394,7 +430,7 @@ function IssueTab({ onIssued }: { onIssued: () => void }) {
             <Input value={barcode} onChange={(e) => setBarcode(e.target.value)} onKeyDown={(e) => e.key === "Enter" && scan()} placeholder="9789966882XXX" />
             <Button variant="secondary" onClick={scan}><ScanLine className="h-4 w-4" /> Find</Button>
           </div>
-          <p className="mt-1 text-xs text-navy-400">Phone scanner apps &quot;type&quot; the code here and press Enter automatically.</p>
+          <p className="mt-1 text-xs text-navy-400">Standard USB/Bluetooth hardware scanners type and press Enter automatically.</p>
         </div>
 
         {hit && (
@@ -407,20 +443,84 @@ function IssueTab({ onIssued }: { onIssued: () => void }) {
           </div>
         )}
 
-        <div>
-          <Label>Or pick from the catalog</Label>
-          <select value={bookId} onChange={(e) => { setBookId(e.target.value); setHit(null); }} className={select}>
-            <option value="">Pick a book…</option>
-            {books.map((b) => <option key={b.id} value={b.id}>{b.title} — {b.copiesAvailable} available</option>)}
-          </select>
+        {/* Search Only Book Catalog Selection (H.3) */}
+        <div className="relative">
+          <Label>Search Book Catalog</Label>
+          {bookId ? (
+            <div className="mt-1.5 flex items-center justify-between rounded-2xl border border-green-200 bg-green-50 px-4 py-2.5 text-sm font-semibold text-green-800 dark:border-green-900 dark:bg-green-900/20 dark:text-green-300">
+              <span className="truncate">{bookQuery}</span>
+              <button onClick={() => { setBookId(""); setBookQuery(""); setHit(null); }} className="rounded-full p-0.5 hover:bg-green-500/10" aria-label="Clear book"><X className="h-4 w-4" /></button>
+            </div>
+          ) : (
+            <div className="relative">
+              <Input
+                value={bookQuery}
+                onChange={(e) => { setBookQuery(e.target.value); setShowBookHits(true); }}
+                onFocus={() => setShowBookHits(true)}
+                placeholder="Type book title or ISBN code..."
+                className="mt-1.5"
+              />
+              {showBookHits && bookQuery.trim().length > 0 && (
+                <div className="absolute top-full left-0 z-10 mt-1 max-h-40 w-full overflow-y-auto rounded-2xl border border-navy-100 bg-white p-1.5 shadow-pop dark:border-navy-800 dark:bg-navy-950">
+                  {matchedBooks.length === 0 ? (
+                    <p className="p-3 text-center text-xs text-navy-400">No matching books found.</p>
+                  ) : (
+                    matchedBooks.map((b) => (
+                      <button
+                        key={b.id}
+                        onClick={() => { setBookId(b.id); setBookQuery(b.title); setShowBookHits(false); }}
+                        className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-xs hover:bg-navy-50 dark:hover:bg-navy-800"
+                      >
+                        <span className="font-semibold text-navy-800 dark:text-navy-100">{b.title}</span>
+                        <Badge tone={b.copiesAvailable > 0 ? "green" : "red"}>{b.copiesAvailable} left</Badge>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
-        <div>
-          <Label>Student</Label>
-          <select value={studentId} onChange={(e) => setStudentId(e.target.value)} className={select}>
-            <option value="">Pick a student…</option>
-            {students.map((s) => <option key={s.id} value={s.id}>{s.name} — {s.admissionNo}</option>)}
-          </select>
+
+        {/* Search Only Borrower (Student or Teacher) Selection (H.3) */}
+        <div className="relative">
+          <Label>Search Borrower (Student or Teacher)</Label>
+          {studentId ? (
+            <div className="mt-1.5 flex items-center justify-between rounded-2xl border border-green-200 bg-green-50 px-4 py-2.5 text-sm font-semibold text-green-800 dark:border-green-900 dark:bg-green-900/20 dark:text-green-300">
+              <span className="truncate">{borrowerQuery}</span>
+              <button onClick={() => { setStudentId(""); setBorrowerQuery(""); }} className="rounded-full p-0.5 hover:bg-green-500/10" aria-label="Clear borrower"><X className="h-4 w-4" /></button>
+            </div>
+          ) : (
+            <div className="relative">
+              <Input
+                value={borrowerQuery}
+                onChange={(e) => { setBorrowerQuery(e.target.value); setShowBorrowerHits(true); }}
+                onFocus={() => setShowBorrowerHits(true)}
+                placeholder="Type name, admission number, or TSC no..."
+                className="mt-1.5"
+              />
+              {showBorrowerHits && borrowerQuery.trim().length > 0 && (
+                <div className="absolute top-full left-0 z-10 mt-1 max-h-40 w-full overflow-y-auto rounded-2xl border border-navy-100 bg-white p-1.5 shadow-pop dark:border-navy-800 dark:bg-navy-950">
+                  {matchedBorrowers.length === 0 ? (
+                    <p className="p-3 text-center text-xs text-navy-400">No matching borrowers found.</p>
+                  ) : (
+                    matchedBorrowers.map((s) => (
+                      <button
+                        key={s.id}
+                        onClick={() => { setStudentId(s.id); setBorrowerQuery(`${s.name} (${s.admissionNo})`); setShowBorrowerHits(false); }}
+                        className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-xs hover:bg-navy-50 dark:hover:bg-navy-800"
+                      >
+                        <span className="font-semibold text-navy-800 dark:text-navy-100">{s.name}</span>
+                        <span className="font-mono text-[10px] text-navy-400">{s.admissionNo}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
+
         <div><Label>Due date</Label><Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></div>
         <Button onClick={issue} disabled={busy || !bookId || !studentId || !dueDate} className="w-full">
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <BookUp className="h-4 w-4" />} Issue book

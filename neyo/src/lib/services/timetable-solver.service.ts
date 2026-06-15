@@ -113,6 +113,7 @@ export async function saveTimetableConfig(
     hasRemedials?: boolean;
     hasPreps?: boolean;
     lunchShift?: number;
+    hasSaturday?: boolean;
   }
 ) {
   return withTenant(user.tenantId, async () => {
@@ -136,6 +137,7 @@ export async function saveTimetableConfig(
         hasRemedials: input.hasRemedials ?? false,
         hasPreps: input.hasPreps ?? false,
         lunchShift: input.lunchShift ?? 1,
+        hasSaturday: input.hasSaturday ?? true,
       },
       update: {
         periodsPerDay: input.periodsPerDay,
@@ -152,6 +154,7 @@ export async function saveTimetableConfig(
         hasRemedials: input.hasRemedials ?? false,
         hasPreps: input.hasPreps ?? false,
         lunchShift: input.lunchShift ?? 1,
+        hasSaturday: input.hasSaturday ?? true,
       },
     });
 

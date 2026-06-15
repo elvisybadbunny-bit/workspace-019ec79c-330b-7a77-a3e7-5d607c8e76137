@@ -7,7 +7,7 @@
 import * as React from "react";
 import {
   Users, AlertCircle, Loader2, X, Check, Plus, CalendarOff, Briefcase,
-  Star, ShieldAlert, GraduationCap, ArrowUpRight, FileText,
+  Star, ShieldAlert, GraduationCap, ArrowUpRight, FileText, Search,
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -49,6 +49,8 @@ function DirectoryTab({ canManage }: { canManage: boolean }) {
   const [rows, setRows] = React.useState<StaffRow[] | null>(null);
   const [error, setError] = React.useState(false);
   const [file, setFile] = React.useState<string | null>(null);
+  const [q, setQ] = React.useState("");
+  const [importing, setImporting] = React.useState(false);
 
   const load = React.useCallback(async () => {
     setError(false);
@@ -63,13 +65,36 @@ function DirectoryTab({ canManage }: { canManage: boolean }) {
   if (error) return <LoadError onRetry={load} />;
   if (rows === null) return <Skeletons />;
 
+  const filtered = rows.filter((r) => 
+    r.name.toLowerCase().includes(q.toLowerCase()) ||
+    r.role.toLowerCase().includes(q.toLowerCase()) ||
+    (r.tscNumber && r.tscNumber.toLowerCase().includes(q.toLowerCase()))
+  );
+
   return (
     <>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-navy-300" />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search staff, role, TSC No..."
+            className="w-64 rounded-full border border-navy-200 bg-white py-2 pl-9 pr-4 text-sm dark:border-navy-700 dark:bg-navy-900"
+          />
+        </div>
+        {canManage && (
+          <Button onClick={() => setImporting(true)}>
+            <Plus className="h-4 w-4" /> Bulk Import Staff
+          </Button>
+        )}
+      </div>
+
       <TableContainer>
         <Table>
           <THead><TR><TH>Staff</TH><TH>TSC No.</TH><TH>Contract</TH><TH>Since</TH><TH></TH></TR></THead>
           <TBody>
-            {rows.map((r) => (
+            {filtered.map((r) => (
               <TR key={r.userId}>
                 <TD>
                   <span className="font-medium">{r.name}</span>
@@ -85,6 +110,7 @@ function DirectoryTab({ canManage }: { canManage: boolean }) {
         </Table>
       </TableContainer>
       {file && <StaffFileDrawer userId={file} canManage={canManage} onClose={() => { setFile(null); load(); }} />}
+      {importing && <ImportStaffModal onClose={() => setImporting(false)} onDone={() => { setImporting(false); load(); }} />}
     </>
   );
 }
@@ -645,4 +671,139 @@ function LoadError({ onRetry }: { onRetry: () => void }) {
 }
 function Skeletons() {
   return <div className="space-y-3">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-20 rounded-2xl" />)}</div>;
+}
+
+// ---- Staff Excel / CSV Import Modal (Chunk C — Part 1) -------------------------------
+interface ImportErrorItem { row: number; name: string; message: string }
+
+function ImportStaffModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+  const { toast } = useToast();
+  const [text, setText] = React.useState("");
+  const [importing, setImporting] = React.useState(false);
+  const [result, setResult] = React.useState<{ created: number; skipped: number; errors: ImportErrorItem[] } | null>(null);
+
+  async function handleImport() {
+    if (!text.trim()) return;
+    setImporting(true);
+    setResult(null);
+
+    try {
+      // Parse TSV/CSV lines (excel paste uses tabs '\t', csv uses commas)
+      const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+      const parsedRows = lines.map((line) => {
+        const cells = line.split(/\t|,/);
+        return {
+          fullName: cells[0]?.trim() || "",
+          role: cells[1]?.trim() || "TEACHER",
+          phone: cells[2]?.trim() || undefined,
+          email: cells[3]?.trim() || undefined,
+          tscNumber: cells[4]?.trim() || undefined,
+          nationalId: cells[5]?.trim() || undefined,
+        };
+      }).filter((r) => r.fullName.length > 0 && r.fullName.toLowerCase() !== "full name");
+
+      if (parsedRows.length === 0) {
+        toast({ title: "No valid rows found to import.", tone: "error" });
+        setImporting(false);
+        return;
+      }
+
+      const res = await fetch("/api/hr/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rows: parsedRows }),
+      });
+      const json = await res.json();
+
+      if (json.ok) {
+        setResult(json.data);
+        toast({
+          title: `Import completed: ${json.data.created} staff members created!`,
+          tone: json.data.created > 0 ? "success" : "error",
+        });
+        if (json.data.created > 0) {
+          onDone();
+        }
+      } else {
+        toast({ title: json.error?.message || "Import failed.", tone: "error" });
+      }
+    } catch {
+      toast({ title: "Failed to parse or submit import data.", tone: "error" });
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-950/40 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full max-w-xl rounded-3xl bg-white p-6 shadow-pop dark:bg-navy-900 border border-navy-100 dark:border-navy-800" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-4 flex items-center justify-between">
+          <div className="space-y-0.5">
+            <h3 className="text-base font-bold text-navy-900 dark:text-navy-50">Bulk Import Staff</h3>
+            <p className="text-xs text-navy-400">Copy and paste columns directly from your Excel spreadsheet.</p>
+          </div>
+          <button onClick={onClose} className="rounded-full p-1.5 text-navy-400 hover:bg-navy-50 dark:hover:bg-navy-800">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-dashed border-navy-200 bg-warm-50 p-4 text-xs dark:border-navy-700 dark:bg-navy-950">
+            <p className="font-bold text-navy-700 dark:text-navy-300">Expected Column Order:</p>
+            <p className="mt-1 text-navy-500 font-mono">Full Name | Role | Phone | Email | TSC Number | National ID</p>
+            <p className="mt-2 text-navy-400">Roles must match standard keys (e.g. PRINCIPAL, BURSAR, TEACHER, LIBRARIAN, SUPPORT_STAFF).</p>
+          </div>
+
+          {!result ? (
+            <div className="space-y-3">
+              <div>
+                <Label htmlFor="paste-data">Paste Spreadsheet Cells</Label>
+                <textarea
+                  id="paste-data"
+                  rows={6}
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  placeholder="Achieng Mary&#9;BURSAR&#9;0711223344&#9;achieng@sch.ac.ke&#9;TSC/001&#9;12345678&#10;Kamau John&#9;TEACHER&#9;0722334455&#9;&#9;&#9;"
+                  className="mt-1.5 w-full rounded-2xl border border-navy-200 bg-white px-3.5 py-2.5 text-xs font-mono transition-colors duration-200 ease-apple focus:border-navy-300 focus:outline-none focus:ring-2 focus:ring-green-500/30 dark:border-navy-700 dark:bg-navy-900 text-navy-900 dark:text-navy-50"
+                  disabled={importing}
+                />
+              </div>
+              <Button onClick={handleImport} disabled={importing || !text.trim()} className="w-full">
+                {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                Run Bulk Staff Import
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-2 text-center text-xs">
+                <div className="rounded-2xl bg-green-500/10 border border-green-500/20 p-3 text-green-700 dark:text-green-300 font-semibold">
+                  <span className="block text-lg font-bold">{result.created}</span>
+                  Created Successfully
+                </div>
+                <div className="rounded-2xl bg-amber-500/10 border border-amber-500/20 p-3 text-amber-700 dark:text-amber-300 font-semibold">
+                  <span className="block text-lg font-bold">{result.skipped}</span>
+                  Skipped / Errors
+                </div>
+              </div>
+
+              {result.errors.length > 0 && (
+                <div className="max-h-40 overflow-y-auto rounded-2xl border border-red-100 bg-red-50/50 p-3 dark:border-red-900/30 dark:bg-red-950/20 space-y-1.5">
+                  <p className="text-xs font-bold text-red-700 dark:text-red-300">Detailed Import Logs:</p>
+                  {result.errors.map((e, idx) => (
+                    <div key={idx} className="text-[11px] text-navy-600 dark:text-navy-300">
+                      <span className="font-semibold">{e.name} (Row {e.row}):</span> {e.message}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <Button variant="secondary" onClick={() => { setResult(null); setText(""); }} className="w-full">
+                Import Another List
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }

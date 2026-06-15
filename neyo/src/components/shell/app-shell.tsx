@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 export function AppShell({
   children,
   tenantName = "Karibu High School",
+  tenantLogoUrl,
   userName = "Wanjiru Kamau",
   userRole = "Principal",
   enabledModules,
@@ -24,6 +25,7 @@ export function AppShell({
 }: {
   children: React.ReactNode;
   tenantName?: string;
+  tenantLogoUrl?: string | null;
   userName?: string;
   userRole?: string;
   enabledModules?: string[];
@@ -38,6 +40,7 @@ export function AppShell({
       <PwaProvider />
       <Topbar
         tenantName={tenantName}
+        tenantLogoUrl={tenantLogoUrl}
         userName={userName}
         userRole={userRole}
         canViewAs={canViewAs}

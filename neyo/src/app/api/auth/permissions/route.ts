@@ -9,9 +9,17 @@ export async function GET() {
   try {
     const user = await getCurrentUser();
     if (!user) return ok({ role: null, permissions: [] });
+    
+    // Combine primary and secondary roles permissions for dual-role staff support
+    const primaryPerms = permissionsForRole(user.role);
+    const secondaryPerms = user.secondaryRole ? permissionsForRole(user.secondaryRole) : [];
+    
+    const combinedPerms = Array.from(new Set([...primaryPerms, ...secondaryPerms])).sort();
+
     return ok({
       role: user.role,
-      permissions: permissionsForRole(user.role),
+      secondaryRole: user.secondaryRole,
+      permissions: combinedPerms,
     });
   } catch (err) {
     return handleError(err);

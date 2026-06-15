@@ -4,7 +4,7 @@ import { listStudents, getStudent, createStudent, StudentError } from "../src/li
 import type { SessionUser } from "../src/lib/core/session";
 
 function asUser(u: any): SessionUser {
-  return { id: u.id, tenantId: u.tenantId, neyoLoginId: u.neyoLoginId, fullName: u.fullName, phone: u.phone, email: u.email, role: u.role, language: u.language };
+  return { id: u.id, tenantId: u.tenantId, neyoLoginId: u.neyoLoginId, fullName: u.fullName, phone: u.phone, email: u.email, role: u.role, secondaryRole: u.secondaryRole ?? null, language: u.language };
 }
 
 async function main() {

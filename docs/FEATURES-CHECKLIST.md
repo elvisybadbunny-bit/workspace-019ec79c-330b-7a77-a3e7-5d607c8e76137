@@ -1359,3 +1359,62 @@
 - [x] Contact (address, phone, email, map) + Enroll/Admissions CTA -> /get-started or inquiry capture (A.18.6)  *(corrected 2026-06-13: contact card uses G.9 phone/email/address, map iframe or fallback location card, primary CTA links `/apply`, portal CTA links `/login`)*
 - [x] Image uploads throughout (reuse A.9 storage), all content editable from Settings  *(corrected 2026-06-13: `/settings/public-site` tabs Story/News/Gallery/People/Activities/SEO support FileUpload for hero, OG, news, gallery, leader/testimonial photos; admin APIs require `tenant.manage_settings`; teacher 403 verified)*
 - [x] SEO: per-school title/description/Open Graph so Google indexes the school's subdomain  *(corrected 2026-06-13: `generateMetadata()` reads `seoTitle`, `seoDescription`, `ogImageUrl` with hero/logo fallbacks; editor has SEO tab; public API only exposes published content)*
+
+---
+
+# PART H — NEYO 2026 Founder Custom Roadmap (Added 2026-06-14)
+
+This custom roadmap contains the exact features, logic shifts, and design mandates requested directly by the NEYO Founder to make our platform the absolute standard for school operations in Kenya.
+
+## H.1 — Chunk A: Core Foundation, Role Restrictions & Dashboard Hierarchy (COMPLETE 6/6)
+- [x] Time-of-Day Dynamic Greetings  *(Good morning / Good afternoon / Good evening depending on Nairobi UTC+3 hour)*
+- [x] Money-First Executive Dashboard  *(Owner/Principal dashboards place Outstanding Fees, Collected Today, Collection Pct, and Presence at the very top)*
+- [x] Inline SVG Sparkline Trend Charts  *(Visual trend curves inside stat cards without heavy external libraries)*
+- [x] Multi-Role Staff Support  *(Database `secondaryRole` column added; session permissions automatically combine both roles)*
+- [x] Top-Left School Brand Logo Integration  *(The sidebar's generic N logo is replaced dynamically by the school's registered logo badge)*
+- [x] App-Shell Hover Micro-Motion  *(Apple/Linear ease-apple transition effects; cards lift by -translate-y-0.5 and shift reflections on hover)*
+
+## H.2 — Chunk B: Security Hardening & Administrative Visibility Control
+- [ ] Biometric/Passkey Gated Critical Actions  *(Fingerprint or Face ID WebAuthn/Passkey verification required before executing deletions, setting changes, or library book clearances)*
+- [ ] Role-Based Settings & Module Visibility Control  *(Allows school owners to restrict access so only specific users can see "My School" views or metrics, completely hiding administrative settings/menus from non-concerned staff, who only see passwords and language settings)*
+- [ ] Multi-Owner Support  *(Support for multiple registered school owners, with joint approvals and confirmation logs for critical administrative operations)*
+- [ ] Principal Master Attendance Override  *(Principals view class registers by default, but possess a toggle to take over and mark attendance themselves as the school master)*
+- [ ] Customized Printing Limits  *(Principal, Deputies, and Academics HOD can change print limits dynamically; other roles must request in-app approval to print documents)*
+- [ ] Boarding School Print Station Scheduler  *(Option to completely turn off the auto-print station and batch-print all invoices/receipts only when the school term comes to an end)*
+- [ ] Big Date Calendar Displays  *(Enlarge calendar date displays to ensure they are highly visible and do not drift upwards on any device screen)*
+
+## H.3 — Chunk C: Departmental HOD Empowerment & Academics Control
+- [ ] Principal-Only HOD Appointments  *(Only the Principal/Owner has permissions to appoint HODs)*
+- [ ] 1-Tap Subject Mean Grade Release to Parents  *(Academics department + Principal can release exam results in one tap, auto-calculating subject means and sending notifications to parents)*
+- [ ] Dynamic Subject & Department Manager  *(HODs and Principal can map subjects directly to departments, and register non-academic departments such as Co-curricular Activities)*
+- [ ] Co-curricular Activities Timetable Linkage  *(Link co-curricular schedules directly into the main school timetable)*
+- [ ] Saturday Timetable Support  *(Full weekend timetable configuration with customized lesson start and end times)*
+- [ ] Saturday Shared Scheduling Buttons  *(Shared buttons for scheduling exams or remedial classes (Form 6 to 9) in one tap, avoiding tedious individual buttons)*
+- [ ] Timetable Access Guard  *(Only the Academics HOD and Principal have permissions to modify timetable slots; ordinary teachers are blocked)*
+- [ ] Term Dates Authority Guard  *(Only Principal/Owner can edit academic term dates)*
+- [ ] Staff Bulk Import Menu  *(A complete, validation-gated bulk import menu for staff records, working fully rule-based for now and prepared for handwritten image-scans with Bundi later)*
+
+## H.4 — Chunk D: Sibling Pickup Security & Hostel Automation
+- [ ] Parent-Initiated Safe Pickup Authorization  *(Parents register authorized pick-up persons in-app by entering their National ID number)*
+- [ ] Security Gate ID Scanner Verification  *(Guards at the gate search visitor National IDs against the authorized pickup list (no dropdowns, search only). Ticking them off triggers an instant SMS to the parent's phone confirming the pickup)*
+- [ ] Alternate Pickup Message/Screenshot Verification  *(Supports verification of a secure screenshot or confirmation message sent to the picker)*
+- [ ] Alternate pickup guardian manager  *(Allows parents to change their authorized pick-up person dynamically at their convenience)*
+- [ ] Gate Pass Authority Guard  *(Gate passes are only issued by Principal/Deputy; guards verify validity by number at the gate)*
+- [ ] Suspension & Disciplinary Action Guard  *(HODs can issue suspensions, but they must be approved by the Principal or Deputy before taking effect)*
+- [ ] Automated Dorm Placement Engine  *(Automatically allocates boarders to dorm beds based on mixed or form-based preferences, filtering out day scholars)*
+- [ ] Student Transfer Freed-Space Trackers  *(Student transfers out automatically record the freed bed space and update the Boarding department)*
+
+## H.5 — Chunk E: Hardware Barcode Scanner, Library & Cafeteria Upgrades
+- [ ] Library Barcode Scanner Hardware Support  *(Integrate standard USB/Bluetooth hardware barcode scanner wedge search input, avoiding mobile cameras)*
+- [ ] Teacher Book Borrowing Eligibility  *(Teachers can borrow books and have their IDs scanned in the library)*
+- [ ] Library Late Fines Switch  *(Customizable ON/OFF switch in settings to enable/disable late book returns fines)*
+- [ ] Dropdown-Free Library Search  *(Force typeahead-search-only for all library transactions to prevent scrolling lag)*
+- [ ] Library Clearance Transfer Guard  *(Student transfers out are blocked until the student returns all borrowed books and clears their library ledger)*
+- [ ] Dishi na County Table Allocation  *(Organize cafeteria tables per class in the same stream (not mixed). Supports lunch-only or supper-only meal plans, automatically allocating student names to tables after the school selects table sizes)*
+- [ ] Disappearing Group Voice Notes  *(Group voice call/note features in class chats with disappearing mode to prevent server storage cost blowups)*
+- [ ] Incident Photo Proof Module  *(Supports uploading photo proof to incident reports to confirm student identity and prevent false admission number inputs)*
+- [ ] Exam & Leaving Certificates Vault  *(Trace and store KCSE or KCPE leaving certificates and academic records when handed over to students)*
+- [ ] Admissions Entrance Exam Storage  *(Store and print entrance interview exams per class directly from the admissions panel)*
+- [ ] Quick-Action Incline Messaging Buttons  *(Inline buttons across dashboards to quickly trigger messages to targeted persons)*
+
+

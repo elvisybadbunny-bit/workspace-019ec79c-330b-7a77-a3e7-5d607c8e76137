@@ -46,6 +46,17 @@ export async function POST(req: NextRequest) {
         freePeriodsPerWeek: Number(body.freePeriodsPerWeek || 0),
         coCurricularCount: Number(body.coCurricularCount || 0),
         coCurricularName: body.coCurricularName || "Games",
+        lessonDurationMins: Number(body.lessonDurationMins || 40),
+        shortBreakStart: Number(body.shortBreakStart || 2),
+        shortBreakMins: Number(body.shortBreakMins || 15),
+        longBreakStart: Number(body.longBreakStart || 4),
+        longBreakMins: Number(body.longBreakMins || 30),
+        lunchStart: Number(body.lunchStart || 6),
+        lunchMins: Number(body.lunchMins || 60),
+        hasRemedials: Boolean(body.hasRemedials),
+        hasPreps: Boolean(body.hasPreps),
+        lunchShift: Number(body.lunchShift || 1),
+        hasSaturday: Boolean(body.hasSaturday !== undefined ? body.hasSaturday : true),
       });
       return ok(result);
     }

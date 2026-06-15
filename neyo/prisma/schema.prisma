@@ -43,6 +43,7 @@ model Tenant {
 
   // Calendar preferences (A.17.3): opt-in to showing religious moments.
   showReligiousHolidays Boolean @default(true)
+  libraryFinesEnabled   Boolean @default(true) // customizable switch for late book returns fines (H.3)
 
   // School Profile & Branding (G.9). Used across receipts/reports/ID cards and
   // (later) the public subdomain landing site (G.11).
@@ -560,6 +561,8 @@ model TimetableSlot {
   dayOfWeek Int // 1=Mon .. 5=Fri
   period    Int // 1..8
   slotType  String  @default("ACADEMIC") // ACADEMIC | REMEDIAL | PREP
+  weekRotation String  @default("ALL")     // ALL | WEEK_A | WEEK_B for alternating Saturdays
+
 
   @@unique([tenantId, classId, dayOfWeek, period, slotType])
   @@index([tenantId, teacherId, dayOfWeek, period])
@@ -1220,6 +1223,8 @@ model DisciplineIncident {
   reportedById     String
   reportedByName   String
   parentNotifiedAt DateTime?
+  proofFileUrl     String?   // Added for incident photo proof (H.3)
+  proofFileName    String?   // Added for incident photo proof name (H.3)
   createdAt        DateTime  @default(now())
 
   @@index([tenantId, studentId])
@@ -1832,6 +1837,8 @@ model User {
   phone        String? // +254 format
   email        String?
   role         String  @default("RECEPTIONIST") // validated against the 16 roles
+  secondaryRole String?                         // optional second role for dual-role staff
+
   passwordHash String? // Argon2id in production (A.14)
   isActive     Boolean @default(true)
   language     String  @default("en") // A.15 preferred UI language: en | sw
@@ -2252,6 +2259,7 @@ model Student {
 
   classId     String?
   schoolClass SchoolClass? @relation(fields: [classId], references: [id], onDelete: SetNull)
+  boardingType String @default("BOARDER") // "DAY" | "BOARDER" - gates hostel allocations (H.3)
 
   // Optional linked NEYO login account (the student logs in).
   userId String? @unique
@@ -2274,6 +2282,7 @@ model Student {
   attendance            AttendanceRecord[]
   promisesToPay         PromiseToPay[]
   reportCardDayCheckIns ReportCardDayCheckIn[]
+  leavingCertificate    LeavingCertificate?    // Added for Leaving Certificate Vault (H.3)
 
   @@unique([tenantId, admissionNo])
   @@index([tenantId])
@@ -2644,6 +2653,8 @@ model TimetableConfig {
   hasRemedials       Boolean @default(false)
   hasPreps           Boolean @default(false)
   lunchShift         Int     @default(1)
+  hasSaturday        Boolean @default(true) // class-level Saturday toggle
+
 }
 
 model PromiseToPay {
@@ -2897,4 +2908,26 @@ model NeyoCustomerInterview {
   @@index([interviewDate])
   @@index([status])
   @@index([schoolName])
+}
+
+// ---- Leaving Certificate Vault (H.3) ---------------------------------------
+model LeavingCertificate {
+  id               String    @id @default(cuid())
+  tenantId         String
+  studentId        String    @unique
+  student          Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  certificateType  String    // "KCPE" | "KCSE" | "OTHER"
+  certificateNo    String    @unique
+  status           String    @default("STORED") // STORED | HANDED_OVER
+  fileUrl          String?   // scanned copy upload (optional)
+  fileName         String?
+  hardcopyLocation String    @default("Unspecified") // physical location of the hardcopy certificate (H.3) - MANDATORY!
+  handedOverTo     String?   // who physically took it (e.g. Student, Parent)
+  handedOverAt     DateTime? // exact date and time of handover
+  handedOverById   String?   // staff who did the handover
+  handedOverByName String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([tenantId])
 }

@@ -330,3 +330,104 @@ export async function boarderVisitors(user: SessionUser, studentId: string) {
     }));
   });
 }
+
+/** 
+ * G.16 / B.16 Automated Dorm Placement Engine (H.3).
+ * Automatically places unallocated boarder students into available hostel beds.
+ * - Checks and blocks Day Scholars (boardingType === "DAY") from allocation.
+ * - Validates Student Gender against the Hostel's allowed gender.
+ * - Strategy: "FORM" (group same-level classes together) | "MIXED" (distribute sequentially).
+ */
+export async function autoAllocateHostelBeds(
+  user: SessionUser,
+  hostelId: string,
+  strategy: "FORM" | "MIXED"
+) {
+  return withTenant(user.tenantId, async () => {
+    const hostel = await tenantDb().hostel.findUnique({
+      where: { id: hostelId },
+      include: { rooms: { include: { allocations: { where: { releasedAt: null } } } } },
+    });
+    if (!hostel) throw new HostelError("NOT_FOUND", "Hostel not found.");
+
+    // Match gender
+    const studentGender = hostel.gender === "BOYS" ? "M" : hostel.gender === "GIRLS" ? "F" : null;
+    if (!studentGender) throw new HostelError("INVALID", "Invalid hostel gender configuration.");
+
+    // Load currently allocated student IDs
+    const activeAllocations = await tenantDb().hostelAllocation.findMany({
+      where: { releasedAt: null },
+      select: { studentId: true },
+    });
+    const allocatedIds = new Set(activeAllocations.map((a) => a.studentId));
+
+    // Load active boarder students of matching gender (DAY scholars excluded!) (H.3)
+    const candidates = await tenantDb().student.findMany({
+      where: {
+        tenantId: user.tenantId,
+        gender: studentGender,
+        status: "ACTIVE",
+        boardingType: "BOARDER", // Exclude day scholars!
+        deletedAt: null,
+      },
+      include: { schoolClass: true },
+    });
+
+    const unallocatedStudents = candidates.filter((s) => !allocatedIds.has(s.id));
+
+    if (unallocatedStudents.length === 0) {
+      return { success: true, allocatedCount: 0, message: "No unallocated boarders of matching gender found." };
+    }
+
+    // Sort students based on strategy
+    let sortedStudents = [...unallocatedStudents];
+    if (strategy === "FORM") {
+      // Group same-level classes together (e.g. Form 1, then Form 2...)
+      sortedStudents.sort((a, b) => (a.schoolClass?.level || "").localeCompare(b.schoolClass?.level || ""));
+    }
+
+    let allocatedCount = 0;
+    const rooms = [...hostel.rooms].sort((a, b) => a.name.localeCompare(b.name));
+
+    for (const student of sortedStudents) {
+      // Find the first room with a free bed
+      let placed = false;
+      for (const room of rooms) {
+        const takenBeds = new Set(room.allocations.map((a) => a.bedNo));
+        if (takenBeds.size >= room.capacity) continue; // Room full
+
+        // Find first empty bed index
+        const freeBedNo = Array.from({ length: room.capacity }, (_, i) => i + 1).find((n) => !takenBeds.has(n));
+        if (!freeBedNo) continue;
+
+        // Create allocation
+        const alloc = await db.hostelAllocation.create({
+          data: {
+            tenantId: user.tenantId,
+            roomId: room.id,
+            studentId: student.id,
+            studentName: fullName(student),
+            admissionNo: student.admissionNo,
+            bedNo: freeBedNo,
+          },
+        });
+
+        // Add to active set so next iterations know it's taken
+        room.allocations.push(alloc as any);
+        allocatedCount++;
+        placed = true;
+        break;
+      }
+      if (!placed) {
+        break; // All rooms in this hostel are completely full!
+      }
+    }
+
+    await audit(user, "hostel.auto_allocated", "hostel", hostelId, {
+      strategy,
+      allocatedCount,
+    });
+
+    return { success: true, allocatedCount, totalUnallocatedLeft: unallocatedStudents.length - allocatedCount };
+  });
+}

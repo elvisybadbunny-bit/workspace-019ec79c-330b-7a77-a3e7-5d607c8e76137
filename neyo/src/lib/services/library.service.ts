@@ -172,7 +172,10 @@ export async function returnBook(user: SessionUser, input: { issueId: string; fi
     if (!issue) throw new LibraryError("NOT_FOUND", "Issue record not found.");
     if (issue.returnedAt) throw new LibraryError("ALREADY_RETURNED", "This book was already returned.");
 
-    const fineKes = computeFine(issue.dueDate);
+    const tenant = await db.tenant.findUnique({ where: { id: user.tenantId }, select: { libraryFinesEnabled: true } });
+    const finesEnabled = tenant?.libraryFinesEnabled ?? true;
+
+    const fineKes = finesEnabled ? computeFine(issue.dueDate) : 0;
     const row = await tenantDb().bookIssue.update({
       where: { id: issue.id },
       data: { returnedAt: new Date(), fineKes, finePaid: fineKes === 0 ? true : Boolean(input.finePaid) },
@@ -228,6 +231,9 @@ export async function billFineToInvoice(user: SessionUser, issueId: string) {
 /** Open issues (the "out now" desk view) + overdue flags + live fines. */
 export async function openIssues(user: SessionUser) {
   return withTenant(user.tenantId, async () => {
+    const tenant = await db.tenant.findUnique({ where: { id: user.tenantId }, select: { libraryFinesEnabled: true } });
+    const finesEnabled = tenant?.libraryFinesEnabled ?? true;
+
     const rows = await tenantDb().bookIssue.findMany({
       where: { returnedAt: null },
       include: { book: true },
@@ -240,7 +246,7 @@ export async function openIssues(user: SessionUser) {
       issuedAt: r.issuedAt, dueDate: r.dueDate,
       overdue: r.dueDate < today,
       daysOverdue: overdueDays(r.dueDate),
-      fineSoFarKes: computeFine(r.dueDate),
+      fineSoFarKes: finesEnabled ? computeFine(r.dueDate) : 0,
     }));
   });
 }
@@ -266,6 +272,9 @@ export async function unpaidFines(user: SessionUser) {
 
 export async function readingHistory(user: SessionUser, studentId: string) {
   return withTenant(user.tenantId, async () => {
+    const tenant = await db.tenant.findUnique({ where: { id: user.tenantId }, select: { libraryFinesEnabled: true } });
+    const finesEnabled = tenant?.libraryFinesEnabled ?? true;
+
     // Families: scopeWhere restricts to own children; staff with library/student view pass.
     const scope = await scopeWhere(user);
     const student = await tenantDb().student.findFirst({ where: { AND: [{ id: studentId }, scope] } });
@@ -281,7 +290,9 @@ export async function readingHistory(user: SessionUser, studentId: string) {
       issuedAt: r.issuedAt, dueDate: r.dueDate, returnedAt: r.returnedAt,
       fineKes: r.fineKes, finePaid: r.finePaid,
       stillOut: r.returnedAt === null,
-      fineSoFarKes: r.returnedAt === null ? computeFine(r.dueDate) : r.fineKes,
+      fineSoFarKes: r.returnedAt === null 
+        ? (finesEnabled ? computeFine(r.dueDate) : 0) 
+        : r.fineKes,
     }));
   });
 }

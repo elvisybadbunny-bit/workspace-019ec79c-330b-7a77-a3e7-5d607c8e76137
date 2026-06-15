@@ -14,7 +14,7 @@ import { ok, handleError, fail } from "@/lib/api/respond";
 import { hostelSchema, roomSchema, allocateSchema, curfewSchema, hostelInvoiceSchema } from "@/lib/validations/hostel";
 import {
   listHostels, createHostel, addRoom, roomBoard, allocateBed, releaseBed,
-  curfewSheet, markCurfew, invoiceBoarders, boarderVisitors,
+  curfewSheet, markCurfew, invoiceBoarders, boarderVisitors, autoAllocateHostelBeds,
 } from "@/lib/services/hostel.service";
 
 export const dynamic = "force-dynamic";
@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
     const user = await requirePermission("hostel.manage");
     const body = await req.json().catch(() => ({}));
     const action = z
-      .object({ action: z.enum(["addHostel", "addRoom", "allocate", "release", "curfew", "invoice"]) })
+      .object({ action: z.enum(["addHostel", "addRoom", "allocate", "release", "curfew", "invoice", "autoAllocate"]) })
       .parse(body).action;
     if (action === "addHostel") return ok(await createHostel(user, hostelSchema.parse(body)), 201);
     if (action === "addRoom") return ok(await addRoom(user, roomSchema.parse(body)), 201);
@@ -52,6 +52,10 @@ export async function POST(req: NextRequest) {
     if (action === "release") {
       const { allocationId } = z.object({ allocationId: z.string().min(1) }).parse(body);
       return ok(await releaseBed(user, allocationId));
+    }
+    if (action === "autoAllocate") {
+      const { hostelId, strategy } = z.object({ hostelId: z.string(), strategy: z.enum(["FORM", "MIXED"]) }).parse(body);
+      return ok(await autoAllocateHostelBeds(user, hostelId, strategy));
     }
     if (action === "curfew") return ok(await markCurfew(user, curfewSchema.parse(body)));
     return ok(await invoiceBoarders(user, hostelInvoiceSchema.parse(body)));
